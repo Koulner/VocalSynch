@@ -92,15 +92,29 @@ class VocalTranscriber:
             return_char_alignments=False
         )
         
+        # Diarization falls hf_token gesetzt
+        if self.config.text.hf_token:
+            logger.info("[cyan]Führe Speaker Diarization aus...[/cyan]")
+            try:
+                diarize_model = whisperx.DiarizationPipeline(use_auth_token=self.config.text.hf_token, device=wx_device)
+                diarize_segments = diarize_model(audio)
+                aligned_result = whisperx.assign_word_speakers(diarize_segments, aligned_result)
+                logger.info("[bold green]Diarization abgeschlossen.[/bold green]")
+            except Exception as e:
+                logger.info(f"[bold yellow]Diarization fehlgeschlagen (Falscher Token / keine Rechte?): {str(e)}[/bold yellow]")
+
         word_timestamps: list[WordTimestamp] = []
         for segment in aligned_result["segments"]:
+            speaker = segment.get("speaker")
             for word_info in segment.get("words", []):
                 if "start" in word_info and "end" in word_info:
+                    word_speaker = word_info.get("speaker", speaker)
                     word_timestamps.append(
                         WordTimestamp(
                             word=word_info["word"],
                             start=word_info["start"],
-                            end=word_info["end"]
+                            end=word_info["end"],
+                            speaker=word_speaker
                         )
                     )
                     

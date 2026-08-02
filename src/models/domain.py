@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 class WordTimestamp(BaseModel):
     """
@@ -7,3 +8,4 @@ class WordTimestamp(BaseModel):
     word: str
     start: float
     end: float
+    speaker: Optional[str] = None

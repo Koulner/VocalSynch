@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional, List
 from pathlib import Path
 import yaml
 
@@ -9,6 +10,7 @@ class AudioConfig(BaseModel):
 class TextConfig(BaseModel):
     """Konfiguration für die Text-Transkription (WhisperX)."""
     whisper_model: str = "base"
+    hf_token: Optional[str] = None
 
 class AssConfig(BaseModel):
     """Logische Konfiguration für das Untertitel-Timing."""
@@ -24,6 +26,7 @@ class StyleConfig(BaseModel):
     outline: int = 3
     shadow: int = 2
     margin_v: int = 50
+    duet_colours: List[str] = ["&H00FFFF00", "&H00FF00FF", "&H0000FFFF", "&H0000FF00"]
 
 class VideoConfig(BaseModel):
     """Konfiguration für das Rendering und die Videoverarbeitung."""

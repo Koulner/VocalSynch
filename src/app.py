@@ -20,7 +20,7 @@ def hex_to_ass_color(hex_rgb: str) -> str:
         return f"&H00{b}{g}{r}"
     return "&H00FFFFFF"
 
-def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, progress=gr.Progress()):
+def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_duet, hf_token, progress=gr.Progress()):
     if not audio_input:
         raise gr.Error("Bitte lade eine Audio- oder Videodatei hoch.")
         
@@ -37,6 +37,8 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, pro
         actual_bg_visual = bg_visual
         
     config = VideokeConfig.load("configs/default.yaml")
+    if is_duet and hf_token:
+        config.text.hf_token = hf_token
         
     pipeline = VideokePipeline(config=config, input_path=actual_audio, output_dir=output_dir, bg_visual=actual_bg_visual)
     
@@ -53,7 +55,7 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, pro
     if not instrumental_path or not timestamps:
         raise gr.Error("Ein Fehler ist bei der Extraktion aufgetreten.")
         
-    df_data = pd.DataFrame([[wt.word, wt.start, wt.end] for wt in timestamps], columns=["Wort", "Start", "Ende"])
+    df_data = pd.DataFrame([[wt.word, wt.start, wt.end, wt.speaker or ""] for wt in timestamps], columns=["Wort", "Start", "Ende", "Sprecher"])
     
     return (
         df_data,
@@ -66,7 +68,7 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, pro
     )
 
 def start_rendering(df, instrumental_path_str, bg_visual_str, audio_in_str, keep_vocals, use_original_video,
-                   primary_color, secondary_color, font_size, lead_time, margin_v, progress=gr.Progress()):
+                   secondary_color, primary_color, font_size, lead_time, margin_v, progress=gr.Progress()):
     if not instrumental_path_str or df is None:
         raise gr.Error("Keine Extraktionsdaten gefunden. Bitte starte bei Schritt 1.")
         
@@ -82,10 +84,11 @@ def start_rendering(df, instrumental_path_str, bg_visual_str, audio_in_str, keep
         word = str(row["Wort"])
         start = float(row["Start"])
         end = float(row["Ende"])
-        timestamps.append(WordTimestamp(word=word, start=start, end=end))
+        speaker = str(row["Sprecher"]) if "Sprecher" in row and pd.notna(row["Sprecher"]) and str(row["Sprecher"]).strip() != "" else None
+        timestamps.append(WordTimestamp(word=word, start=start, end=end, speaker=speaker))
         
-    config.video.style.primary_colour = hex_to_ass_color(primary_color)
-    config.video.style.secondary_colour = hex_to_ass_color(secondary_color)
+    config.video.style.primary_colour = hex_to_ass_color(secondary_color)
+    config.video.style.secondary_colour = hex_to_ass_color(primary_color)
     config.video.style.font_size = int(font_size)
     config.video.style.margin_v = int(margin_v)
     config.video.ass.lead_time_seconds = float(lead_time)
@@ -126,6 +129,11 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                     keep_vocals_cb = gr.Checkbox(label="Nur Untertitel generieren, Original-Audio behalten", value=False)
                     use_original_video_cb = gr.Checkbox(label="Untertitel auf Original-Video legen", value=False)
                     
+                    is_duet_cb = gr.Checkbox(label="Duett-Modus / Mehrere Sprecher (WhisperX Diarization)", value=False)
+                    hf_token_input = gr.Textbox(type="password", label="Hugging Face Token", visible=False)
+                    
+                    is_duet_cb.change(fn=lambda x: gr.update(visible=x), inputs=[is_duet_cb], outputs=[hf_token_input])
+                    
                     extract_btn = gr.Button("Analyse starten", variant="primary")
                     
         with gr.Tab("Schritt 2: Editor & Render", id="tab_editor"):
@@ -133,16 +141,16 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 with gr.Column(scale=2):
                     gr.Markdown("### WhisperX Timestamps Editor")
                     words_df = gr.Dataframe(
-                        headers=["Wort", "Start", "Ende"],
-                        datatype=["str", "number", "number"],
+                        headers=["Wort", "Start", "Ende", "Sprecher"],
+                        datatype=["str", "number", "number", "str"],
                         interactive=True,
                         wrap=True
                     )
                     
                 with gr.Column(scale=1):
                     gr.Markdown("### Visuelle Settings")
-                    primary_color = gr.ColorPicker(label="Standardfarbe (Primary)", value="#00FFFF")
-                    secondary_color = gr.ColorPicker(label="Highlightfarbe (Secondary)", value="#FFFFFF")
+                    secondary_color = gr.ColorPicker(label="Standardfarbe (Primary)", value="#00FFFF")
+                    primary_color = gr.ColorPicker(label="Highlightfarbe (Secondary)", value="#FFFFFF")
                     font_size = gr.Slider(minimum=20, maximum=100, step=1, label="Schriftgröße", value=36)
                     lead_time = gr.Slider(minimum=0.0, maximum=3.0, step=0.1, label="Lead-Time (Sek.)", value=1.5)
                     margin_v = gr.Slider(minimum=0, maximum=200, step=1, label="Vertikaler Abstand (MarginV)", value=50)
@@ -156,7 +164,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             
     extract_btn.click(
         fn=start_extraction,
-        inputs=[audio_in, bg_in, keep_vocals_cb, use_original_video_cb],
+        inputs=[audio_in, bg_in, keep_vocals_cb, use_original_video_cb, is_duet_cb, hf_token_input],
         outputs=[words_df, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video, tabs]
     )
     
@@ -164,7 +172,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         fn=start_rendering,
         inputs=[
             words_df, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video,
-            primary_color, secondary_color, font_size, lead_time, margin_v
+            secondary_color, primary_color, font_size, lead_time, margin_v
         ],
         outputs=[video_out, files_out]
     )

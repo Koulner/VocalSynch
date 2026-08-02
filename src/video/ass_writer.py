@@ -43,7 +43,10 @@ def generate_karaoke_ass(timestamps: list[WordTimestamp], output_path: Path, con
         prev_wt = current_line_words[-1]
         pause = wt.start - prev_wt.end
         
-        if pause > max_pause or len(current_line_words) >= max_words:
+        # Zeilenumbruch wenn Pause zu lang, Limit erreicht oder Speaker wechselt
+        speaker_changed = (wt.speaker != prev_wt.speaker)
+        
+        if pause > max_pause or len(current_line_words) >= max_words or speaker_changed:
             lines.append(current_line_words)
             current_line_words = [wt]
         else:
@@ -52,8 +55,20 @@ def generate_karaoke_ass(timestamps: list[WordTimestamp], output_path: Path, con
     if current_line_words:
         lines.append(current_line_words)
         
-    # Header dynamisch aus der Config generieren
+    # Dynamisch Styles für erkannte Speaker generieren
+    unique_speakers = list(set([wt.speaker for wt in timestamps if wt.speaker]))
+    unique_speakers.sort()
+    
     style = config.video.style
+    
+    # Basis-Style
+    styles_str = f"Style: Karaoke,Arial,{style.font_size},{style.primary_colour},{style.secondary_colour},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,{style.margin_v},1\n"
+    
+    # Speaker-Styles
+    for i, spk in enumerate(unique_speakers):
+        spk_color = style.duet_colours[i % len(style.duet_colours)]
+        styles_str += f"Style: Karaoke_{spk},Arial,{style.font_size},{style.primary_colour},{spk_color},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,{style.margin_v},1\n"
+        
     ass_header = f"""[Script Info]
 Title: Videoke Karaoke Subtitles
 ScriptType: v4.00+
@@ -63,7 +78,7 @@ YCbCr Matrix: None
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,Arial,{style.font_size},{style.primary_colour},{style.secondary_colour},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,{style.margin_v},1
+{styles_str.strip()}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -91,4 +106,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 
             ass_text = ass_text.rstrip()
             
-            f.write(f"Dialogue: 0,{line_start},{line_end},Karaoke,,0,0,0,,{ass_text}\n")
+            line_style = "Karaoke"
+            if line_words[0].speaker:
+                line_style = f"Karaoke_{line_words[0].speaker}"
+            
+            f.write(f"Dialogue: 0,{line_start},{line_end},{line_style},,0,0,0,,{ass_text}\n")
