@@ -21,6 +21,7 @@ from pathlib import Path
 from src.core.utils import logger
 from src.core.config import VideokeConfig
 from src.models.domain import WordTimestamp
+import pyphen
 
 def load_audio_safe(file: str, sr: int = 16000):
     """
@@ -118,7 +119,66 @@ class VocalTranscriber:
                         )
                     )
                     
-        logger.info(f"[bold green]Alignment abgeschlossen! {len(word_timestamps)} gültige Wörter synchronisiert.[/bold green]")
+        # Optional: Syllable Splitting via pyphen
+        if self.config.text.use_syllables:
+            logger.info("[cyan]Wende Silben-Splitting (pyphen) an...[/cyan]")
+            # Map whisper language (e.g., 'en') to pyphen locale (e.g., 'en_US')
+            lang_map = {"en": "en_US", "de": "de_DE", "es": "es_ES", "fr": "fr_FR", "it": "it_IT"}
+            pyphen_lang = lang_map.get(language, "en_US")
+            
+            try:
+                dic = pyphen.Pyphen(lang=pyphen_lang)
+                split_timestamps = []
+                for wt in word_timestamps:
+                    # Strip spaces around the word for splitting
+                    clean_word = wt.word.strip()
+                    if len(clean_word) < 2:
+                        split_timestamps.append(wt)
+                        continue
+                        
+                    inserted = dic.inserted(clean_word)
+                    syllables = inserted.split("-")
+                    
+                    if len(syllables) <= 1:
+                        split_timestamps.append(wt)
+                        continue
+                        
+                    total_chars = sum(len(s) for s in syllables)
+                    duration = wt.end - wt.start
+                    
+                    current_start = wt.start
+                    for i, syl in enumerate(syllables):
+                        # Berechne Anteil der Silbe an der Wort-Dauer
+                        ratio = len(syl) / total_chars if total_chars > 0 else 1.0 / len(syllables)
+                        syl_dur = duration * ratio
+                        syl_end = current_start + syl_dur
+                        
+                        # Erstes Leerzeichen beibehalten (WhisperX gibt " Word" oder "Word ")
+                        syl_text = syl
+                        if i == 0 and wt.word.startswith(" "):
+                            syl_text = " " + syl_text
+                        if i == len(syllables) - 1 and wt.word.endswith(" "):
+                            syl_text = syl_text + " "
+                            
+                        is_last = (i == len(syllables) - 1)
+                        
+                        split_timestamps.append(
+                            WordTimestamp(
+                                word=syl_text,
+                                start=current_start,
+                                end=syl_end,
+                                speaker=wt.speaker,
+                                append_space=is_last
+                            )
+                        )
+                        current_start = syl_end
+                
+                word_timestamps = split_timestamps
+                logger.info("[bold green]Silben-Splitting abgeschlossen.[/bold green]")
+            except Exception as e:
+                logger.info(f"[bold yellow]Fehler beim Silben-Splitting: {e}[/bold yellow]")
+                    
+        logger.info(f"[bold green]Alignment abgeschlossen! {len(word_timestamps)} gültige Wörter/Silben synchronisiert.[/bold green]")
         
         del model
         del model_a

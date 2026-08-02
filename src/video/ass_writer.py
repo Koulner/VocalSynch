@@ -136,7 +136,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         ass_text += f"{{\\k{gap_cs}}} "
                         
                 duration_cs = int(round((wt.end - wt.start) * 100))
-                ass_text += f"{{\\kf{duration_cs}}}{wt.word} "
+                space = " " if wt.append_space else ""
+                ass_text += f"{{\\kf{duration_cs}}}{wt.word}{space}"
                 prev_end = wt.end
                 
             ass_text = ass_text.rstrip()

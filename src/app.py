@@ -11,6 +11,7 @@ import pandas as pd
 from src.main import prepare_input, VideokePipeline
 from src.core.config import VideokeConfig
 from src.models.domain import WordTimestamp
+from src.utils.downloader import YouTubeDownloader
 
 def hex_to_ass_color(hex_rgb: str) -> str:
     """Konvertiert Gradio RGB Hex (#RRGGBB) zu ASS BGR Hex (&H00BBGGRR)."""
@@ -20,14 +21,20 @@ def hex_to_ass_color(hex_rgb: str) -> str:
         return f"&H00{b}{g}{r}"
     return "&H00FFFFFF"
 
-def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_duet, hf_token, progress=gr.Progress()):
-    if not audio_input:
-        raise gr.Error("Bitte lade eine Audio- oder Videodatei hoch.")
+def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_duet, hf_token, youtube_url, use_syllables, progress=gr.Progress()):
+    if not audio_input and not youtube_url:
+        raise gr.Error("Bitte lade eine Audio- oder Videodatei hoch oder gib einen YouTube-Link an.")
         
     output_dir = Path("ergebnis_ui")
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    input_path = Path(audio_input)
+    if youtube_url:
+        progress(0.0, desc="YouTube Video wird heruntergeladen...")
+        downloader = YouTubeDownloader()
+        input_path = downloader.download(youtube_url, output_dir, video_mode=use_original_video)
+    else:
+        input_path = Path(audio_input)
+        
     bg_visual = Path(bg_input) if bg_input else None
     
     progress(0.1, desc="Audio extrahieren (falls Video)...")
@@ -35,8 +42,9 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
     
     # Priorität: Hochgeladenes Bild > Extrahiertes Video > None
     actual_bg_visual = bg_visual if bg_visual else extracted_video
-        
     config = VideokeConfig.load("configs/default.yaml")
+    config.text.use_syllables = use_syllables
+    
     if is_duet and hf_token:
         config.text.hf_token = hf_token
         
@@ -67,7 +75,7 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
         gr.Tabs(selected="tab_editor")
     )
 
-def start_rendering(df, instrumental_path_str, bg_visual_str, audio_in_str, keep_vocals, use_original_video,
+def start_rendering(df, instrumental_path_str, bg_visual_str, audio_in_str, youtube_url_str, keep_vocals, use_original_video,
                    secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, progress=gr.Progress()):
     if not instrumental_path_str or df is None:
         raise gr.Error("Keine Extraktionsdaten gefunden. Bitte starte bei Schritt 1.")
@@ -125,14 +133,21 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         with gr.Tab("Schritt 1: Analyse", id="tab_analyse"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    audio_in = gr.File(label="Song (MP3/WAV/MP4)", file_types=[".mp3", ".wav", ".flac", ".mp4", ".mov", ".mkv"])
+                    with gr.Tabs():
+                        with gr.Tab("Lokale Datei"):
+                            audio_in = gr.File(label="Song (MP3/WAV/MP4)", file_types=[".mp3", ".wav", ".flac", ".mp4", ".mov", ".mkv"])
+                        with gr.Tab("YouTube Link"):
+                            youtube_url = gr.Textbox(label="YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
+                            
                     bg_in = gr.Image(type="filepath", label="Hintergrundbild (Optional)")
                     
                     keep_vocals_cb = gr.Checkbox(label="Nur Untertitel generieren, Original-Audio behalten", value=False)
                     use_original_video_cb = gr.Checkbox(label="Untertitel auf Original-Video legen", value=False)
                     
-                    is_duet_cb = gr.Checkbox(label="Duett-Modus / Mehrere Sprecher (WhisperX Diarization)", value=False)
-                    hf_token_input = gr.Textbox(type="password", label="Hugging Face Token", visible=False)
+                    with gr.Accordion("Erweiterte Einstellungen (KI-Modelle)", open=False):
+                        is_duet_cb = gr.Checkbox(label="Duett-Modus / Mehrere Sprecher (WhisperX Diarization)", value=False)
+                        hf_token_input = gr.Textbox(type="password", label="Hugging Face Token", visible=False)
+                        use_syllables_cb = gr.Checkbox(label="Experimentell: Silben-Splitting für flüssigeres Highlighting nutzen", value=False)
                     
                     is_duet_cb.change(fn=lambda x: gr.update(visible=x), inputs=[is_duet_cb], outputs=[hf_token_input])
                     
@@ -168,14 +183,14 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             
     extract_btn.click(
         fn=start_extraction,
-        inputs=[audio_in, bg_in, keep_vocals_cb, use_original_video_cb, is_duet_cb, hf_token_input],
+        inputs=[audio_in, bg_in, keep_vocals_cb, use_original_video_cb, is_duet_cb, hf_token_input, youtube_url, use_syllables_cb],
         outputs=[words_df, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video, tabs]
     )
     
     render_btn.click(
         fn=start_rendering,
         inputs=[
-            words_df, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video,
+            words_df, state_instrumental, state_bg_visual, state_audio_in, youtube_url, state_keep_vocals, state_use_original_video,
             secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb
         ],
         outputs=[video_out, files_out]

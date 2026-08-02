@@ -9,3 +9,4 @@ class WordTimestamp(BaseModel):
     start: float
     end: float
     speaker: Optional[str] = None
+    append_space: bool = True

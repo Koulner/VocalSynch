@@ -11,6 +11,7 @@ class TextConfig(BaseModel):
     """Konfiguration für die Text-Transkription (WhisperX)."""
     whisper_model: str = "base"
     hf_token: Optional[str] = None
+    use_syllables: bool = False
 
 class AssConfig(BaseModel):
     """Logische Konfiguration für das Untertitel-Timing."""

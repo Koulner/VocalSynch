@@ -3,6 +3,8 @@ audio:
   
 text:
   whisper_model: "base"
+  hf_token: ""
+  use_syllables: false
   
 video:
   ass:
