@@ -68,7 +68,9 @@ class VideoRenderer:
             "-y",
         ]
         
-        if use_original_video and bg_visual:
+        is_video = bg_visual and bg_visual.suffix.lower() in [".mp4", ".mov", ".mkv", ".avi", ".webm"]
+        
+        if use_original_video and is_video:
             meta = get_video_metadata(bg_visual)
             logger.info(f"[dim]Original Video Metadaten: {meta}[/dim]")
             
@@ -83,10 +85,31 @@ class VideoRenderer:
                 "-shortest",
                 str(output_path)
             ])
-        elif bg_visual and not use_original_video:
+        elif bg_visual and not is_video:
             command.extend([
                 "-loop", "1",
                 "-i", str(bg_visual),
+                "-i", str(instrumental_path),
+                "-vf", f"subtitles='{ass_str}'",
+                "-map", "0:v",
+                "-map", "1:a",
+                "-c:v", self.encoder,
+                "-c:a", "aac",
+                "-shortest",
+                str(output_path)
+            ])
+        elif bg_visual and is_video and not use_original_video:
+            logger.info("[cyan]Verwende das erste Bild des Videos als statischen Hintergrund...[/cyan]")
+            frame_path = output_path.parent / f"{bg_visual.stem}_frame.jpg"
+            if not frame_path.exists():
+                subprocess.run([
+                    ffmpeg_exe, "-y", "-i", str(bg_visual),
+                    "-vframes", "1", "-q:v", "2", str(frame_path)
+                ], check=True, capture_output=True)
+                
+            command.extend([
+                "-loop", "1",
+                "-i", str(frame_path),
                 "-i", str(instrumental_path),
                 "-vf", f"subtitles='{ass_str}'",
                 "-map", "0:v",

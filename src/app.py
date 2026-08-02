@@ -31,10 +31,10 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
     bg_visual = Path(bg_input) if bg_input else None
     
     progress(0.1, desc="Audio extrahieren (falls Video)...")
-    actual_audio, actual_bg_visual = prepare_input(input_path, output_dir)
+    actual_audio, extracted_video = prepare_input(input_path, output_dir)
     
-    if bg_visual and not actual_bg_visual:
-        actual_bg_visual = bg_visual
+    # Priorität: Hochgeladenes Bild > Extrahiertes Video > None
+    actual_bg_visual = bg_visual if bg_visual else extracted_video
         
     config = VideokeConfig.load("configs/default.yaml")
     if is_duet and hf_token:
@@ -68,7 +68,7 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
     )
 
 def start_rendering(df, instrumental_path_str, bg_visual_str, audio_in_str, keep_vocals, use_original_video,
-                   secondary_color, primary_color, font_size, lead_time, margin_v, progress=gr.Progress()):
+                   secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues, progress=gr.Progress()):
     if not instrumental_path_str or df is None:
         raise gr.Error("Keine Extraktionsdaten gefunden. Bitte starte bei Schritt 1.")
         
@@ -92,6 +92,7 @@ def start_rendering(df, instrumental_path_str, bg_visual_str, audio_in_str, keep
     config.video.style.font_size = int(font_size)
     config.video.style.margin_v = int(margin_v)
     config.video.ass.lead_time_seconds = float(lead_time)
+    config.video.ass.use_entry_cues = bool(use_entry_cues)
     
     pipeline = VideokePipeline(config=config, input_path=input_path, output_dir=output_dir, bg_visual=bg_visual)
     
@@ -153,6 +154,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                     primary_color = gr.ColorPicker(label="Highlightfarbe (Secondary)", value="#FFFFFF")
                     font_size = gr.Slider(minimum=20, maximum=100, step=1, label="Schriftgröße", value=36)
                     lead_time = gr.Slider(minimum=0.0, maximum=3.0, step=0.1, label="Lead-Time (Sek.)", value=1.5)
+                    use_entry_cues_cb = gr.Checkbox(label="Visual Countdowns vor Gesangseinsatz", value=True)
                     margin_v = gr.Slider(minimum=0, maximum=200, step=1, label="Vertikaler Abstand (MarginV)", value=50)
                     
                     render_btn = gr.Button("Video jetzt rendern", variant="primary")
@@ -172,7 +174,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         fn=start_rendering,
         inputs=[
             words_df, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video,
-            secondary_color, primary_color, font_size, lead_time, margin_v
+            secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues_cb
         ],
         outputs=[video_out, files_out]
     )

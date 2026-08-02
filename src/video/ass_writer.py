@@ -88,21 +88,49 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         f.write(ass_header)
         
         lead_time = config.video.ass.lead_time_seconds
+        use_cues = config.video.ass.use_entry_cues
         
-        for line_words in lines:
+        for i, line_words in enumerate(lines):
             first_word_start = line_words[0].start
-            line_start_time = max(0.0, first_word_start - lead_time)
             
+            # Basis Line Start Time
+            line_start_time = max(0.0, first_word_start - lead_time)
+            if i > 0:
+                line_start_time = max(line_start_time, lines[i-1][-1].end)
+                
             line_start = format_ass_time(line_start_time)
             line_end = format_ass_time(line_words[-1].end)
+                
+            ass_text = ""
             
-            delay_cs = int(round((first_word_start - line_start_time) * 100))
+            # Entry Cue Logik
+            show_cue = False
+            if use_cues:
+                if i == 0 or (first_word_start - lines[i-1][-1].end > 4.0):
+                    if first_word_start - line_start_time >= 1.5:
+                        show_cue = True
             
-            ass_text = f"{{\\k{delay_cs}}} "
+            total_delay_cs = int(round((first_word_start - line_start_time) * 100))
             
+            if show_cue:
+                rest_delay = max(0, total_delay_cs - 150)
+                if rest_delay > 0:
+                    ass_text += f"{{\\k{rest_delay}}}"
+                ass_text += "{\\kf50}• {\\kf50}• {\\kf50}• "
+            else:
+                ass_text += f"{{\\k{total_delay_cs}}} "
+            
+            prev_end = None
             for wt in line_words:
+                if prev_end is not None:
+                    gap = wt.start - prev_end
+                    if gap > 0.1:
+                        gap_cs = int(round(gap * 100))
+                        ass_text += f"{{\\k{gap_cs}}} "
+                        
                 duration_cs = int(round((wt.end - wt.start) * 100))
-                ass_text += f"{{\\k{duration_cs}}}{wt.word} "
+                ass_text += f"{{\\kf{duration_cs}}}{wt.word} "
+                prev_end = wt.end
                 
             ass_text = ass_text.rstrip()
             

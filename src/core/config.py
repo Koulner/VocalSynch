@@ -17,6 +17,7 @@ class AssConfig(BaseModel):
     lead_time_seconds: float = 1.5
     max_words_per_line: int = 14
     max_pause_seconds: float = 1.2
+    use_entry_cues: bool = True
 
 class StyleConfig(BaseModel):
     """Visuelle Konfiguration für die Untertitel-Darstellung (ASS Format)."""

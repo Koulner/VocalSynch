@@ -9,6 +9,7 @@ video:
     lead_time_seconds: 1.5
     max_words_per_line: 14
     max_pause_seconds: 1.2
+    use_entry_cues: true
   style:
     font_size: 36
     primary_colour: "&H0000FFFF"
