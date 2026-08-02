@@ -1,0 +1,18 @@
+# Core Pipeline Dependencies
+demucs
+whisperx
+pydantic
+typer
+rich
+torchaudio
+
+# ==========================================
+# PyTorch Installation Instructions
+# ==========================================
+# Standard NVIDIA CUDA or CPU:
+# pip install torch torchvision torchaudio
+#
+# AMD ROCm Installation (For AMD GPUs):
+# Wenn du eine AMD Grafikkarte nutzt und ROCm unterstützt wird,
+# installiere PyTorch über den folgenden Befehl:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.1

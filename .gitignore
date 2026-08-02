@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+.venv/*
+venv/*
+env/
+ENV/
+
+# Output / Results directory
+ergebnis/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary Audio / Video files (falls du sie im Root-Verzeichnis ablegst)
+*.mp3
+*.mp4
+*.wav
+*.ass
+
+# OS generated files
+.DS_Store
+Thumbs.db
