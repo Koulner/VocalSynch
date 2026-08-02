@@ -1,0 +1,17 @@
+audio:
+  demucs_model: "htdemucs"
+  
+text:
+  whisper_model: "base"
+  
+video:
+  ass:
+    lead_time_seconds: 1.5
+    max_words_per_line: 14
+    max_pause_seconds: 1.2
+  style:
+    font_size: 36
+    primary_colour: "&H0000FFFF"
+    secondary_colour: "&H00FFFFFF"
+    outline: 3
+    shadow: 2

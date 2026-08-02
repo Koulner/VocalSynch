@@ -1,4 +1,20 @@
 import torch
+from rich.console import Console
+from rich.logging import RichHandler
+import logging
+
+# Zentrale Console-Instanz für das gesamte Projekt
+console = Console()
+
+# Logger-Konfiguration
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, console=console)]
+)
+
+logger = logging.getLogger("videoke")
 
 def is_amd_rocm() -> bool:
     """
@@ -14,7 +30,6 @@ def get_optimal_device() -> str:
     - 'cpu' als Fallback
     """
     if torch.cuda.is_available():
-        # ROCm wird von PyTorch intern ebenfalls als "cuda" behandelt
         return "cuda"
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return "mps"

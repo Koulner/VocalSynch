@@ -1,6 +1,7 @@
 import gradio as gr
 from pathlib import Path
-from main import prepare_input, VideokePipeline
+from src.main import prepare_input, VideokePipeline
+from src.core.config import VideokeConfig
 
 def process_ui(audio_input, bg_input, progress=gr.Progress()):
     if not audio_input:
@@ -15,11 +16,12 @@ def process_ui(audio_input, bg_input, progress=gr.Progress()):
     progress(0.1, desc="Audio extrahieren (falls Video)...")
     actual_audio, actual_bg_visual = prepare_input(input_path, output_dir)
     
-    # Falls ein separates Hintergrundbild hochgeladen wurde, überschreibt dies das Video-Bild
     if bg_visual and not actual_bg_visual:
         actual_bg_visual = bg_visual
         
-    pipeline = VideokePipeline(input_path=actual_audio, output_dir=output_dir, bg_visual=actual_bg_visual)
+    config = VideokeConfig.load("configs/default.yaml")
+        
+    pipeline = VideokePipeline(config=config, input_path=actual_audio, output_dir=output_dir, bg_visual=actual_bg_visual)
     
     final_results = None
     for status in pipeline.run():
@@ -45,7 +47,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             bg_in = gr.Image(type="filepath", label="Hintergrundbild (Optional)")
             
             with gr.Accordion("Erweiterte Einstellungen", open=False):
-                gr.Markdown("*(Hier können später Settings wie Farbe oder Outline-Dicke hinzugefügt werden)*")
+                gr.Markdown("*(Einstellungen werden aus configs/default.yaml geladen)*")
                 
             submit_btn = gr.Button("Videoke generieren", variant="primary")
             
