@@ -2,7 +2,12 @@ import typer
 import subprocess
 import imageio_ffmpeg
 from typing import Optional
+import sys
 from pathlib import Path
+import copy
+
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from src.core.utils import logger, get_optimal_device
 from src.core.config import VideokeConfig
@@ -62,67 +67,81 @@ class VideokePipeline:
             f"Gerät:        [bold yellow]{self.device}[/bold yellow]"
         )
 
-    def _separate_stems(self) -> dict[str, Path]:
-        stemmer = AudioStemmer(config=self.config, device=self.device)
-        return stemmer.separate_stems(self.input_path, self.output_dir)
-
-    def _transcribe_and_align(self, vocal_path: Path) -> list[WordTimestamp]:
-        transcriber = VocalTranscriber(config=self.config, device=self.device)
-        return transcriber.transcribe_and_align(vocal_path)
-
-    def _render_video(self, instrumental_path: Path, timestamps: list[WordTimestamp]) -> Path:
-        renderer = VideoRenderer(config=self.config)
-        ass_path = self.output_dir / "karaoke.ass"
-        
-        original_name = self.bg_visual.stem if self.bg_visual else self.input_path.stem
-        output_mp4 = self.output_dir / f"{original_name}_videoke.mp4"
-        
-        logger.info("[cyan]Generiere ASS-Untertitel...[/cyan]")
-        generate_karaoke_ass(timestamps, ass_path, config=self.config)
-        
-        renderer.render(instrumental_path, ass_path, output_mp4, bg_visual=self.bg_visual)
-        
-        return output_mp4
-
-    def run(self):
+    def run_extraction(self, keep_vocals: bool = False):
         """
-        Orchestriert die Pipeline schrittweise. (Yields strings for UI updates)
+        Führt Phase 1 aus: Stem-Separation und Transkription.
+        Yields Statusstrings und am Ende ein dict mit instrumental_path und timestamps.
         """
         try:
-            yield "Schritt 1: Stem-Separation (Audio isolieren)..."
-            logger.info("\n[bold]Schritt 1: Stem-Separation[/bold]")
-            stems = self._separate_stems()
-            
-            vocals_path = stems.get("vocals")
-            instrumental_path = stems.get("instrumental")
-            
-            if not vocals_path or not instrumental_path:
-                raise ValueError("Stem-Separation hat nicht die erwarteten Pfade zurückgegeben.")
+            if keep_vocals:
+                yield "Schritt 1: Stem-Separation übersprungen (Bypass aktiv)..."
+                logger.info("\n[bold]Schritt 1: Stem-Separation (Bypass aktiv)[/bold]")
+                vocals_path = self.input_path
+                instrumental_path = self.input_path
+            else:
+                yield "Schritt 1: Stem-Separation (Audio isolieren)..."
+                logger.info("\n[bold]Schritt 1: Stem-Separation[/bold]")
+                
+                stemmer = AudioStemmer(config=self.config, device=self.device)
+                stems = stemmer.separate_stems(self.input_path, self.output_dir)
+                
+                vocals_path = stems.get("vocals")
+                instrumental_path = stems.get("instrumental")
+                
+                if not vocals_path or not instrumental_path:
+                    raise ValueError("Stem-Separation hat nicht die erwarteten Pfade zurückgegeben.")
 
             yield "Schritt 2: Transkription & Alignment (WhisperX)..."
             logger.info("\n[bold]Schritt 2: Transkription & Alignment[/bold]")
-            timestamps = self._transcribe_and_align(vocals_path)
+            
+            transcriber = VocalTranscriber(config=self.config, device=self.device)
+            timestamps = transcriber.transcribe_and_align(vocals_path)
             
             if not timestamps:
                 raise RuntimeError("Keine gültigen Timestamps generiert. Abbruch.")
 
-            yield "Schritt 3: Video rendern (FFmpeg)..."
-            logger.info("\n[bold]Schritt 3: Video-Rendering[/bold]")
-            final_video_path = self._render_video(instrumental_path, timestamps)
-            
-            logger.info(
-                f"\n[bold green]🎉 Pipeline erfolgreich abgeschlossen![/bold green]\n"
-                f"Video gespeichert unter: [cyan]{final_video_path}[/cyan]"
-            )
-            
             yield {
-                "video": final_video_path,
                 "instrumental": instrumental_path,
-                "ass": self.output_dir / "karaoke.ass"
+                "timestamps": timestamps
             }
 
         except Exception as e:
-            logger.info(f"\n[bold red]Pipeline-Fehler:[/bold red] {str(e)}")
+            logger.info(f"\n[bold red]Pipeline-Fehler (Extraction):[/bold red] {str(e)}")
+            raise e
+
+    def run_rendering(self, instrumental_path: Path, timestamps: list[WordTimestamp], override_config: Optional[VideokeConfig] = None, use_original_video: bool = False):
+        """
+        Führt Phase 2 aus: Video rendern mit editierten Timestamps und Config.
+        """
+        try:
+            yield "Schritt 3: Video rendern (FFmpeg)..."
+            logger.info("\n[bold]Schritt 3: Video-Rendering[/bold]")
+            
+            active_config = override_config if override_config else self.config
+            renderer = VideoRenderer(config=active_config)
+            ass_path = self.output_dir / "karaoke.ass"
+            
+            original_name = self.bg_visual.stem if self.bg_visual else self.input_path.stem
+            output_mp4 = self.output_dir / f"{original_name}_videoke.mp4"
+            
+            logger.info("[cyan]Generiere ASS-Untertitel...[/cyan]")
+            generate_karaoke_ass(timestamps, ass_path, config=active_config)
+            
+            renderer.render(instrumental_path, ass_path, output_mp4, bg_visual=self.bg_visual, use_original_video=use_original_video)
+            
+            logger.info(
+                f"\n[bold green]🎉 Pipeline erfolgreich abgeschlossen![/bold green]\n"
+                f"Video gespeichert unter: [cyan]{output_mp4}[/cyan]"
+            )
+            
+            yield {
+                "video": output_mp4,
+                "instrumental": instrumental_path,
+                "ass": ass_path
+            }
+
+        except Exception as e:
+            logger.info(f"\n[bold red]Pipeline-Fehler (Rendering):[/bold red] {str(e)}")
             raise e
 
 @app.command()
@@ -142,8 +161,18 @@ def main(
     pipeline = VideokePipeline(config=config, input_path=actual_audio, output_dir=output_dir, bg_visual=bg_visual)
     
     try:
-        for status in pipeline.run():
+        # Phase 1
+        instrumental_path = None
+        timestamps = []
+        for status in pipeline.run_extraction():
+            if isinstance(status, dict):
+                instrumental_path = status["instrumental"]
+                timestamps = status["timestamps"]
+        
+        # Phase 2
+        for status in pipeline.run_rendering(instrumental_path, timestamps):
             pass
+            
     except Exception:
         raise typer.Exit(code=1)
 

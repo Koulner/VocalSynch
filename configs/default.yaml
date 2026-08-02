@@ -15,3 +15,4 @@ video:
     secondary_colour: "&H00FFFFFF"
     outline: 3
     shadow: 2
+    margin_v: 50

@@ -23,6 +23,7 @@ class StyleConfig(BaseModel):
     secondary_colour: str = "&H00FFFFFF"
     outline: int = 3
     shadow: int = 2
+    margin_v: int = 50
 
 class VideoConfig(BaseModel):
     """Konfiguration für das Rendering und die Videoverarbeitung."""
