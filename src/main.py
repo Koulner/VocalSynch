@@ -9,7 +9,7 @@ import copy
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.core.utils import logger, get_optimal_device
+from src.core.utils import logger, get_optimal_device, get_video_metadata
 from src.core.config import VideokeConfig
 from src.models.domain import WordTimestamp
 from src.audio.stemmer import AudioStemmer
@@ -118,13 +118,37 @@ class VideokePipeline:
             logger.info("\n[bold]Schritt 3: Video-Rendering[/bold]")
             
             active_config = override_config if override_config else self.config
+            
+            # Auflösung des Hintergrunds ermitteln
+            target_w, target_h = 1280, 720
+            if self.bg_visual:
+                meta = get_video_metadata(self.bg_visual)
+                if meta.get("width") and meta.get("height"):
+                    target_w = meta["width"]
+                    target_h = meta["height"]
+                    
+            if active_config.video.downscale_1080p:
+                logger.info("[cyan]Smart Downscaling (max 1080p) aktiv...[/cyan]")
+                if target_w > target_h and target_w > 1920:
+                    scale = 1920 / target_w
+                    target_w = 1920
+                    target_h = int(target_h * scale)
+                elif target_h > target_w and target_h > 1920:
+                    scale = 1920 / target_h
+                    target_h = 1920
+                    target_w = int(target_w * scale)
+                    
+            # Canvas-Auflösung in Config speichern
+            active_config.video.ass.play_res_x = target_w
+            active_config.video.ass.play_res_y = target_h
+            
             renderer = VideoRenderer(config=active_config)
             ass_path = self.output_dir / "karaoke.ass"
             
             original_name = self.bg_visual.stem if self.bg_visual else self.input_path.stem
             output_mp4 = self.output_dir / f"{original_name}_videoke.mp4"
             
-            logger.info("[cyan]Generiere ASS-Untertitel...[/cyan]")
+            logger.info(f"[cyan]Generiere ASS-Untertitel (Canvas: {target_w}x{target_h})...[/cyan]")
             generate_karaoke_ass(timestamps, ass_path, config=active_config)
             
             renderer.render(instrumental_path, ass_path, output_mp4, bg_visual=self.bg_visual, use_original_video=use_original_video)

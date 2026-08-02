@@ -60,18 +60,25 @@ def generate_karaoke_ass(timestamps: list[WordTimestamp], output_path: Path, con
     unique_speakers.sort()
     
     style = config.video.style
+    play_res_x = config.video.ass.play_res_x
+    play_res_y = config.video.ass.play_res_y
+    
+    # MarginV als Prozent relativ zur Videohöhe
+    margin_v_abs = int(play_res_y * (style.margin_v / 100.0))
     
     # Basis-Style
-    styles_str = f"Style: Karaoke,Arial,{style.font_size},{style.primary_colour},{style.secondary_colour},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,{style.margin_v},1\n"
+    styles_str = f"Style: Karaoke,Arial,{style.font_size},{style.primary_colour},{style.secondary_colour},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,{margin_v_abs},1\n"
     
     # Speaker-Styles
     for i, spk in enumerate(unique_speakers):
         spk_color = style.duet_colours[i % len(style.duet_colours)]
-        styles_str += f"Style: Karaoke_{spk},Arial,{style.font_size},{style.primary_colour},{spk_color},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,{style.margin_v},1\n"
+        styles_str += f"Style: Karaoke_{spk},Arial,{style.font_size},{style.primary_colour},{spk_color},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,{margin_v_abs},1\n"
         
     ass_header = f"""[Script Info]
 Title: Videoke Karaoke Subtitles
 ScriptType: v4.00+
+PlayResX: {play_res_x}
+PlayResY: {play_res_y}
 WrapStyle: 0
 ScaledBorderAndShadow: yes
 YCbCr Matrix: None

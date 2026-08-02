@@ -18,6 +18,8 @@ class AssConfig(BaseModel):
     max_words_per_line: int = 14
     max_pause_seconds: float = 1.2
     use_entry_cues: bool = True
+    play_res_x: int = 1280
+    play_res_y: int = 720
 
 class StyleConfig(BaseModel):
     """Visuelle Konfiguration für die Untertitel-Darstellung (ASS Format)."""
@@ -26,11 +28,12 @@ class StyleConfig(BaseModel):
     secondary_colour: str = "&H00FFFFFF"
     outline: int = 3
     shadow: int = 2
-    margin_v: int = 50
+    margin_v: int = 15
     duet_colours: List[str] = ["&H00FFFF00", "&H00FF00FF", "&H0000FFFF", "&H0000FF00"]
 
 class VideoConfig(BaseModel):
     """Konfiguration für das Rendering und die Videoverarbeitung."""
+    downscale_1080p: bool = False
     ass: AssConfig
     style: StyleConfig
 

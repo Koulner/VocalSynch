@@ -2,9 +2,8 @@ import subprocess
 import imageio_ffmpeg
 from typing import Optional
 from pathlib import Path
-from src.core.utils import logger
+from src.core.utils import logger, get_video_metadata
 from src.core.config import VideokeConfig
-import json
 
 def get_ffmpeg_encoder() -> str:
     """Ermittelt den besten verfügbaren Hardware-Encoder in FFmpeg."""
@@ -24,27 +23,7 @@ def get_ffmpeg_encoder() -> str:
     except Exception:
         return "libx264"
 
-def get_video_metadata(video_path: Path) -> dict:
-    """Holt Metadaten (Auflösung, Codec) via ffprobe."""
-    try:
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-        ffprobe_exe = str(ffmpeg_exe).replace("ffmpeg", "ffprobe")
-        if not Path(ffprobe_exe).exists():
-            ffprobe_exe = "ffprobe" # Fallback auf systemweiten ffprobe
-            
-        command = [
-            ffprobe_exe,
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height,codec_name",
-            "-of", "json",
-            str(video_path)
-        ]
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
-        return json.loads(result.stdout)
-    except Exception as e:
-        logger.info(f"[bold yellow]ffprobe Fehler: {e}. Verwende Fallback.[/bold yellow]")
-        return {}
+
 
 class VideoRenderer:
     """
@@ -70,6 +49,10 @@ class VideoRenderer:
         
         is_video = bg_visual and bg_visual.suffix.lower() in [".mp4", ".mov", ".mkv", ".avi", ".webm"]
         
+        play_x = self.config.video.ass.play_res_x
+        play_y = self.config.video.ass.play_res_y
+        vf_filter = f"scale={play_x}:{play_y},subtitles='{ass_str}'"
+        
         if use_original_video and is_video:
             meta = get_video_metadata(bg_visual)
             logger.info(f"[dim]Original Video Metadaten: {meta}[/dim]")
@@ -77,7 +60,7 @@ class VideoRenderer:
             command.extend([
                 "-i", str(bg_visual),
                 "-i", str(instrumental_path),
-                "-vf", f"subtitles='{ass_str}'",
+                "-vf", vf_filter,
                 "-map", "0:v",
                 "-map", "1:a",
                 "-c:v", self.encoder,
@@ -90,7 +73,7 @@ class VideoRenderer:
                 "-loop", "1",
                 "-i", str(bg_visual),
                 "-i", str(instrumental_path),
-                "-vf", f"subtitles='{ass_str}'",
+                "-vf", vf_filter,
                 "-map", "0:v",
                 "-map", "1:a",
                 "-c:v", self.encoder,
@@ -111,7 +94,7 @@ class VideoRenderer:
                 "-loop", "1",
                 "-i", str(frame_path),
                 "-i", str(instrumental_path),
-                "-vf", f"subtitles='{ass_str}'",
+                "-vf", vf_filter,
                 "-map", "0:v",
                 "-map", "1:a",
                 "-c:v", self.encoder,
@@ -122,9 +105,9 @@ class VideoRenderer:
         else:
             command.extend([
                 "-f", "lavfi",
-                "-i", "color=c=black:s=1280x720:r=30",
+                "-i", f"color=c=black:s={play_x}x{play_y}:r=30",
                 "-i", str(instrumental_path),
-                "-vf", f"subtitles='{ass_str}'",
+                "-vf", vf_filter,
                 "-map", "0:v",
                 "-map", "1:a",
                 "-c:v", self.encoder,

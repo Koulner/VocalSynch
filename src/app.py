@@ -68,7 +68,7 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
     )
 
 def start_rendering(df, instrumental_path_str, bg_visual_str, audio_in_str, keep_vocals, use_original_video,
-                   secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues, progress=gr.Progress()):
+                   secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, progress=gr.Progress()):
     if not instrumental_path_str or df is None:
         raise gr.Error("Keine Extraktionsdaten gefunden. Bitte starte bei Schritt 1.")
         
@@ -93,6 +93,7 @@ def start_rendering(df, instrumental_path_str, bg_visual_str, audio_in_str, keep
     config.video.style.margin_v = int(margin_v)
     config.video.ass.lead_time_seconds = float(lead_time)
     config.video.ass.use_entry_cues = bool(use_entry_cues)
+    config.video.downscale_1080p = bool(downscale_1080p)
     
     pipeline = VideokePipeline(config=config, input_path=input_path, output_dir=output_dir, bg_visual=bg_visual)
     
@@ -152,10 +153,11 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                     gr.Markdown("### Visuelle Settings")
                     secondary_color = gr.ColorPicker(label="Standardfarbe (Primary)", value="#00FFFF")
                     primary_color = gr.ColorPicker(label="Highlightfarbe (Secondary)", value="#FFFFFF")
-                    font_size = gr.Slider(minimum=20, maximum=100, step=1, label="Schriftgröße", value=36)
+                    font_size = gr.Slider(minimum=5, maximum=100, step=1, label="Schriftgröße", value=36)
                     lead_time = gr.Slider(minimum=0.0, maximum=3.0, step=0.1, label="Lead-Time (Sek.)", value=1.5)
                     use_entry_cues_cb = gr.Checkbox(label="Visual Countdowns vor Gesangseinsatz", value=True)
-                    margin_v = gr.Slider(minimum=0, maximum=200, step=1, label="Vertikaler Abstand (MarginV)", value=50)
+                    downscale_1080p_cb = gr.Checkbox(label="Video für schnelleres Rendering auf max. 1080p herunterskalieren (behält Seitenverhältnis)", value=False)
+                    margin_v = gr.Slider(minimum=0, maximum=50, step=1, label="Abstand von unten (%)", value=15)
                     
                     render_btn = gr.Button("Video jetzt rendern", variant="primary")
                     
@@ -174,7 +176,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         fn=start_rendering,
         inputs=[
             words_df, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video,
-            secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues_cb
+            secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb
         ],
         outputs=[video_out, files_out]
     )
