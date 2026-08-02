@@ -91,10 +91,11 @@ class VideokePipeline:
 
     def run(self):
         """
-        Orchestriert die Pipeline schrittweise.
+        Orchestriert die Pipeline schrittweise. (Yields strings for UI updates)
         """
         try:
             # Schritt 1: Stems separieren
+            yield "Schritt 1: Stem-Separation (Audio isolieren)..."
             console.print("\n[bold]Schritt 1: Stem-Separation[/bold]")
             stems = self._separate_stems()
             
@@ -105,14 +106,15 @@ class VideokePipeline:
                 raise ValueError("Stem-Separation hat nicht die erwarteten Pfade (vocals, instrumental) zurückgegeben.")
 
             # Schritt 2: Transkription & Alignment der Vocals
+            yield "Schritt 2: Transkription & Alignment (WhisperX)..."
             console.print("\n[bold]Schritt 2: Transkription & Alignment[/bold]")
             timestamps = self._transcribe_and_align(vocals_path)
             
             if not timestamps:
-                console.print("[bold red]Fehler:[/bold red] Keine gültigen Timestamps generiert. Abbruch.")
-                return
+                raise RuntimeError("Keine gültigen Timestamps generiert. Abbruch.")
 
             # Schritt 3: Rendern des Videos (Karaoke-Effekt)
+            yield "Schritt 3: Video rendern (FFmpeg)..."
             console.print("\n[bold]Schritt 3: Video-Rendering[/bold]")
             final_video_path = self._render_video(instrumental_path, timestamps)
             
@@ -121,9 +123,16 @@ class VideokePipeline:
                 f"Video gespeichert unter:\n[cyan]{final_video_path}[/cyan]",
                 title="Erfolg!"
             ))
+            
+            yield {
+                "video": final_video_path,
+                "instrumental": instrumental_path,
+                "ass": self.output_dir / "karaoke.ass"
+            }
 
         except Exception as e:
             console.print(f"\n[bold red]Pipeline-Fehler:[/bold red] {str(e)}")
+            raise e
 
 
 @app.command()
@@ -149,7 +158,13 @@ def main(
     actual_audio, bg_visual = prepare_input(input_path, output_dir)
     
     pipeline = VideokePipeline(input_path=actual_audio, output_dir=output_dir, bg_visual=bg_visual)
-    pipeline.run()
+    
+    try:
+        for status in pipeline.run():
+            if isinstance(status, str):
+                pass # CLI prints are handled inside run()
+    except Exception:
+        raise typer.Exit(code=1)
 
 if __name__ == "__main__":
     app()

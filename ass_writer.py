@@ -2,9 +2,10 @@ from pathlib import Path
 from models import WordTimestamp
 
 # ASS Styling Header
-# Erzeugt ein modernes, zentriertes Styling (Size 48, Bold) im unteren Drittel
-# PrimaryColour (ausgefüllt): &H0000FFFF (Neon-Gelb in AABBGGRR)
+# Erzeugt ein modernes, zentriertes Styling im unteren Drittel
+# PrimaryColour (ausgefüllt/gesungen): &H0000FFFF (Neon-Gelb in AABBGGRR)
 # SecondaryColour (vor dem Singen): &H00FFFFFF (Weiß)
+# Outline=3, Shadow=2 für maximalen Kontrast, Size=36 für Textdichte
 ASS_HEADER = """[Script Info]
 Title: Videoke Karaoke Subtitles
 ScriptType: v4.00+
@@ -14,7 +15,7 @@ YCbCr Matrix: None
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,Arial,48,&H0000FFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,50,1
+Style: Karaoke,Arial,36,&H0000FFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,3,2,2,10,10,50,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -52,7 +53,7 @@ def generate_karaoke_ass(timestamps: list[WordTimestamp], output_path: Path):
     lines = []
     current_line_words = []
     
-    # Wort-Gruppierung (Umbruch wenn Pause > 0.8s oder max 7 Wörter pro Zeile)
+    # Wort-Gruppierung (Umbruch wenn Pause > 1.2s oder max 14 Wörter pro Zeile)
     for wt in timestamps:
         if not current_line_words:
             current_line_words.append(wt)
@@ -61,7 +62,7 @@ def generate_karaoke_ass(timestamps: list[WordTimestamp], output_path: Path):
         prev_wt = current_line_words[-1]
         pause = wt.start - prev_wt.end
         
-        if pause > 0.8 or len(current_line_words) >= 7:
+        if pause > 1.2 or len(current_line_words) >= 14:
             lines.append(current_line_words)
             current_line_words = [wt]
         else:
@@ -74,16 +75,27 @@ def generate_karaoke_ass(timestamps: list[WordTimestamp], output_path: Path):
         f.write(ASS_HEADER)
         
         for line_words in lines:
-            line_start = format_ass_time(line_words[0].start)
+            first_word_start = line_words[0].start
+            
+            # Setze die Start-Zeit des Zeilen-Events exakt 1.5s vor das erste Wort (mindestens 0.0)
+            line_start_time = max(0.0, first_word_start - 1.5)
+            
+            line_start = format_ass_time(line_start_time)
             line_end = format_ass_time(line_words[-1].end)
             
-            ass_text = ""
+            # Berechne den Delay zwischen dem Einblenden der Zeile und dem Beginn des Gesangs
+            delay_cs = int(round((first_word_start - line_start_time) * 100))
+            
+            # Füge das Leerzeichen-Delay am Anfang ein
+            ass_text = f"{{\\k{delay_cs}}} "
+            
             for wt in line_words:
                 # Dauer in Hundertstelsekunden für den \k Tag berechnen
                 duration_cs = int(round((wt.end - wt.start) * 100))
                 ass_text += f"{{\\k{duration_cs}}}{wt.word} "
                 
-            ass_text = ass_text.strip()
+            # Wir nutzen rstrip() (rechts strippen), damit das anfängliche Leerzeichen-Delay erhalten bleibt!
+            ass_text = ass_text.rstrip()
             
             # Dialogue Zeile in die Datei schreiben
             f.write(f"Dialogue: 0,{line_start},{line_end},Karaoke,,0,0,0,,{ass_text}\n")
