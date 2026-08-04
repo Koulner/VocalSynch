@@ -72,7 +72,7 @@ def generate_karaoke_ass(timestamps: list[WordTimestamp], output_path: Path, con
     # Speaker-Styles
     for i, spk in enumerate(unique_speakers):
         spk_color = style.duet_colours[i % len(style.duet_colours)]
-        styles_str += f"Style: Karaoke_{spk},Arial,{style.font_size},{style.primary_colour},{spk_color},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,{margin_v_abs},1\n"
+        styles_str += f"Style: Karaoke_{spk},Arial,{style.font_size},{spk_color},{style.secondary_colour},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,{margin_v_abs},1\n"
         
     ass_header = f"""[Script Info]
 Title: Videoke Karaoke Subtitles

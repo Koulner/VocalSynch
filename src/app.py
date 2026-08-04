@@ -13,6 +13,7 @@ from src.main import prepare_input, VideokePipeline
 from src.core.config import VideokeConfig
 from src.models.domain import WordTimestamp
 from src.utils.downloader import YouTubeDownloader
+from src.core.project_manager import export_project, import_project
 
 def hex_to_ass_color(hex_rgb: str) -> str:
     """Konvertiert Gradio RGB Hex (#RRGGBB) zu ASS BGR Hex (&H00BBGGRR)."""
@@ -85,7 +86,7 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
     )
 
 def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in_str, youtube_url_str, keep_vocals, use_original_video,
-                   secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, progress=gr.Progress()):
+                   color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, progress=gr.Progress()):
     if not instrumental_path_str or not regions_json:
         raise gr.Error("Keine Extraktionsdaten gefunden. Bitte starte bei Schritt 1.")
         
@@ -108,8 +109,8 @@ def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in
         end = float(r.get("end", 0))
         timestamps.append(WordTimestamp(word=word, start=start, end=end, speaker=None))
         
-    config.video.style.primary_colour = hex_to_ass_color(secondary_color)
-    config.video.style.secondary_colour = hex_to_ass_color(primary_color)
+    config.video.style.secondary_colour = hex_to_ass_color(color_ungesungen)
+    config.video.style.primary_colour = hex_to_ass_color(color_gesungen)
     config.video.style.font_size = int(font_size)
     config.video.style.margin_v = int(margin_v)
     config.video.ass.lead_time_seconds = float(lead_time)
@@ -131,6 +132,43 @@ def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in
     return (
         str(final_results["video"]),
         gr.update(value=[str(final_results["video"]), str(final_results["instrumental"]), str(final_results["ass"])], visible=True)
+    )
+
+def export_wrapper(regions_json, media_paths, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p):
+    try:
+        timestamps = json.loads(regions_json)
+    except Exception:
+        timestamps = []
+        
+    config_overrides = {
+        "color_ungesungen": color_ungesungen,
+        "color_gesungen": color_gesungen,
+        "font_size": font_size,
+        "lead_time": lead_time,
+        "margin_v": margin_v,
+        "use_entry_cues": use_entry_cues,
+        "downscale_1080p": downscale_1080p
+    }
+    
+    zip_path = export_project(timestamps, media_paths, config_overrides)
+    return str(zip_path)
+
+def import_wrapper(zip_file):
+    if not zip_file:
+        raise gr.Error("Keine Datei hochgeladen.")
+    media_paths, timestamps, config_overrides = import_project(zip_file.name)
+    
+    return (
+        media_paths,
+        json.dumps(timestamps),
+        config_overrides.get("color_ungesungen", "#FFFFFF"),
+        config_overrides.get("color_gesungen", "#00FFFF"),
+        config_overrides.get("font_size", 36),
+        config_overrides.get("lead_time", 1.5),
+        config_overrides.get("margin_v", 15),
+        config_overrides.get("use_entry_cues", True),
+        config_overrides.get("downscale_1080p", False),
+        gr.update(value="Vocals")
     )
 
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
@@ -170,6 +208,10 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             with gr.Row():
                 with gr.Column(scale=2):
                     gr.Markdown("### WhisperX Timestamps Editor")
+                    with gr.Row():
+                        btn_import = gr.File(label="Projekt laden (.zip)", file_types=[".zip", ".videoke"], type="filepath")
+                        btn_export = gr.DownloadButton("Projekt speichern (.zip)")
+                        
                     track_selector = gr.Radio(choices=["Vocals", "Instrumental", "Original"], value="Vocals", label="Audiospur wechseln")
                     gr.HTML('<div id="waveform-container" style="width: 100%; border: 1px solid #ccc; background: #1f2937; border-radius: 8px;"></div><div id="timeline-container"></div>')
                     
@@ -185,8 +227,8 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                     
                 with gr.Column(scale=1):
                     gr.Markdown("### Visuelle Settings")
-                    secondary_color = gr.ColorPicker(label="Standardfarbe (Primary)", value="#00FFFF")
-                    primary_color = gr.ColorPicker(label="Highlightfarbe (Secondary)", value="#FFFFFF")
+                    color_ungesungen = gr.ColorPicker(label="Standardfarbe (ungesungen)", value="#FFFFFF")
+                    color_gesungen = gr.ColorPicker(label="Highlight-Farbe (gesungen)", value="#00FFFF")
                     font_size = gr.Slider(minimum=5, maximum=100, step=1, label="Schriftgröße", value=36)
                     lead_time = gr.Slider(minimum=0.0, maximum=3.0, step=0.1, label="Lead-Time (Sek.)", value=1.5)
                     use_entry_cues_cb = gr.Checkbox(label="Visual Countdowns vor Gesangseinsatz", value=True)
@@ -302,7 +344,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         fn=start_rendering,
         inputs=[
             dummy_render_input, state_instrumental, state_bg_visual, state_audio_in, youtube_url, state_keep_vocals, state_use_original_video,
-            secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb
+            color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb
         ],
         outputs=[video_out, files_out],
         js="""
@@ -315,6 +357,56 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         }
         """
     )
+    
+    btn_export.click(
+        fn=export_wrapper,
+        inputs=[dummy_render_input, media_paths_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb],
+        outputs=[btn_export],
+        js="""
+        (dummy, media_paths, cu, cg, fsize, lead, marg, cues, down) => {
+            let data = [];
+            if (window.regionsPlugin) {
+                data = window.regionsPlugin.getRegions().map(r => ({word: r.content, start: r.start, end: r.end}));
+            }
+            return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, marg, cues, down];
+        }
+        """
+    )
+
+    btn_import.upload(
+        fn=import_wrapper,
+        inputs=[btn_import],
+        outputs=[media_paths_state, words_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, track_selector]
+    ).then(
+        fn=None,
+        inputs=[media_paths_state, words_state, track_selector],
+        js="""
+        (media_paths, words_json, track) => {
+            if (!window.ws) return;
+            const words = JSON.parse(words_json || "[]");
+            
+            if (media_paths && media_paths[track]) {
+                window.ws.once('decode', () => {
+                    if (window.regionsPlugin) {
+                        window.regionsPlugin.clearRegions();
+                        words.forEach(w => {
+                            window.regionsPlugin.addRegion({
+                                start: w.start,
+                                end: w.end,
+                                content: w.word,
+                                color: 'rgba(255, 255, 0, 0.4)',
+                                drag: true,
+                                resize: true
+                            });
+                        });
+                    }
+                });
+                window.ws.load('/file=' + media_paths[track]);
+            }
+        }
+        """
+    )
+
 
 if __name__ == "__main__":
     import os
