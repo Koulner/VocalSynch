@@ -24,154 +24,242 @@ def hex_to_ass_color(hex_rgb: str) -> str:
     return "&H00FFFFFF"
 
 def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_duet, hf_token, youtube_url, use_syllables, progress=gr.Progress()):
-    if not audio_input and not youtube_url:
-        raise gr.Error("Bitte lade eine Audio- oder Videodatei hoch oder gib einen YouTube-Link an.")
-        
-    output_dir = Path("ergebnis_ui")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    if youtube_url:
-        progress(0.0, desc="YouTube Video wird heruntergeladen...")
-        downloader = YouTubeDownloader()
-        input_path = downloader.download(youtube_url, output_dir, video_mode=use_original_video)
-    else:
-        input_path = Path(audio_input)
-        
-    bg_visual = Path(bg_input) if bg_input else None
-    
-    progress(0.1, desc="Audio extrahieren (falls Video)...")
-    actual_audio, extracted_video = prepare_input(input_path, output_dir)
-    
-    # Priorität: Hochgeladenes Bild > Extrahiertes Video > None
-    actual_bg_visual = bg_visual if bg_visual else extracted_video
-    config = VideokeConfig.load("configs/default.yaml")
-    config.text.use_syllables = use_syllables
-    
-    if is_duet and hf_token:
-        config.text.hf_token = hf_token
-        
-    pipeline = VideokePipeline(config=config, input_path=actual_audio, output_dir=output_dir, bg_visual=actual_bg_visual)
-    
-    instrumental_path = None
-    timestamps = []
-    vocals_path = None
-    
-    for status in pipeline.run_extraction(keep_vocals=keep_vocals):
-        if isinstance(status, str):
-            progress(0.5, desc=status)
-        elif isinstance(status, dict):
-            instrumental_path = status["instrumental"]
-            timestamps = status["timestamps"]
-            vocals_path = status.get("vocals", actual_audio)
+    try:
+        if not audio_input and not youtube_url:
+            raise gr.Error("Bitte lade eine Audio- oder Videodatei hoch oder gib einen YouTube-Link an.")
             
-    if not instrumental_path or not timestamps:
-        raise gr.Error("Ein Fehler ist bei der Extraktion aufgetreten.")
+        output_dir = Path("ergebnis_ui")
+        output_dir.mkdir(parents=True, exist_ok=True)
         
-    words_list = [{"word": wt.word, "start": wt.start, "end": wt.end, "speaker": wt.speaker or ""} for wt in timestamps]
-    media_paths = {
-        "Vocals": str(vocals_path),
-        "Instrumental": str(instrumental_path),
-        "Original": str(actual_audio)
-    }
-    
-    return (
-        words_list,
-        media_paths,
-        str(instrumental_path), 
-        str(actual_bg_visual) if actual_bg_visual else None,
-        str(actual_audio),
-        keep_vocals,
-        use_original_video,
-        gr.Tabs(selected="tab_editor")
-    )
+        if youtube_url:
+            progress(0.0, desc="YouTube Video wird heruntergeladen...")
+            downloader = YouTubeDownloader()
+            input_path = downloader.download(youtube_url, output_dir, video_mode=use_original_video)
+        else:
+            input_path = Path(audio_input)
+            
+        bg_visual = Path(bg_input) if bg_input else None
+        
+        progress(0.1, desc="Audio extrahieren (falls Video)...")
+        actual_audio, extracted_video = prepare_input(input_path, output_dir)
+        
+        # Priorität: Hochgeladenes Bild > Extrahiertes Video > None
+        actual_bg_visual = bg_visual if bg_visual else extracted_video
+        config = VideokeConfig.load("configs/default.yaml")
+        config.text.use_syllables = use_syllables
+        
+        if is_duet and hf_token:
+            config.text.hf_token = hf_token
+            
+        pipeline = VideokePipeline(config=config, input_path=actual_audio, output_dir=output_dir, bg_visual=actual_bg_visual)
+        
+        instrumental_path = None
+        timestamps = []
+        vocals_path = None
+        
+        for status in pipeline.run_extraction(keep_vocals=keep_vocals):
+            if isinstance(status, str):
+                progress(0.5, desc=status)
+            elif isinstance(status, dict):
+                instrumental_path = status["instrumental"]
+                timestamps = status["timestamps"]
+                vocals_path = status.get("vocals", actual_audio)
+                
+        if not instrumental_path or not timestamps:
+            raise gr.Error("Ein Fehler ist bei der Extraktion aufgetreten.")
+            
+        words_list = [{"word": wt.word, "start": wt.start, "end": wt.end, "speaker": wt.speaker or ""} for wt in timestamps]
+        media_paths = {
+            "Vocals": str(vocals_path),
+            "Instrumental": str(instrumental_path),
+            "Original": str(actual_audio)
+        }
+        
+        return (
+            words_list,
+            media_paths,
+            str(instrumental_path), 
+            str(actual_bg_visual) if actual_bg_visual else None,
+            str(actual_audio),
+            keep_vocals,
+            use_original_video
+        )
+    except Exception as e:
+        if isinstance(e, gr.Error):
+            raise e
+        raise gr.Error(f"Fehler: {str(e)}")
 
 def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in_str, youtube_url_str, keep_vocals, use_original_video,
                    color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, progress=gr.Progress()):
-    if not instrumental_path_str or not regions_json:
-        raise gr.Error("Keine Extraktionsdaten gefunden. Bitte starte bei Schritt 1.")
-        
-    instrumental_path = Path(instrumental_path_str)
-    bg_visual = Path(bg_visual_str) if bg_visual_str else None
-    input_path = Path(audio_in_str)
-    output_dir = Path("ergebnis_ui")
-    
-    config = VideokeConfig.load("configs/default.yaml")
-    
     try:
-        regions_data = json.loads(regions_json)
-    except Exception:
-        regions_data = []
-        
-    timestamps = []
-    for r in regions_data:
-        word = str(r.get("word", ""))
-        start = float(r.get("start", 0))
-        end = float(r.get("end", 0))
-        timestamps.append(WordTimestamp(word=word, start=start, end=end, speaker=None))
-        
-    config.video.style.secondary_colour = hex_to_ass_color(color_ungesungen)
-    config.video.style.primary_colour = hex_to_ass_color(color_gesungen)
-    config.video.style.font_size = int(font_size)
-    config.video.style.margin_v = int(margin_v)
-    config.video.ass.lead_time_seconds = float(lead_time)
-    config.video.ass.use_entry_cues = bool(use_entry_cues)
-    config.video.downscale_1080p = bool(downscale_1080p)
-    
-    pipeline = VideokePipeline(config=config, input_path=input_path, output_dir=output_dir, bg_visual=bg_visual)
-    
-    final_results = None
-    for status in pipeline.run_rendering(instrumental_path, timestamps, override_config=config, use_original_video=use_original_video):
-        if isinstance(status, str):
-            progress(0.8, desc=status)
-        elif isinstance(status, dict):
-            final_results = status
+        gr.Info("Timestamps übernommen! Starte Video-Rendering...")
+        if not instrumental_path_str or not regions_json:
+            raise gr.Error("Keine Extraktionsdaten gefunden. Bitte starte bei Schritt 1.")
             
-    if not final_results:
-        raise gr.Error("Fehler beim Rendering.")
+        instrumental_path = Path(instrumental_path_str)
+        bg_visual = Path(bg_visual_str) if bg_visual_str else None
+        input_path = Path(audio_in_str)
+        output_dir = Path("ergebnis_ui")
         
-    return (
-        str(final_results["video"]),
-        gr.update(value=[str(final_results["video"]), str(final_results["instrumental"]), str(final_results["ass"])], visible=True)
-    )
+        config = VideokeConfig.load("configs/default.yaml")
+        
+        try:
+            regions_data = json.loads(regions_json)
+        except Exception:
+            regions_data = []
+            
+        timestamps = []
+        for r in regions_data:
+            word = str(r.get("word", ""))
+            start = float(r.get("start", 0))
+            end = float(r.get("end", 0))
+            timestamps.append(WordTimestamp(word=word, start=start, end=end, speaker=None))
+            
+        config.video.style.secondary_colour = hex_to_ass_color(color_ungesungen)
+        config.video.style.primary_colour = hex_to_ass_color(color_gesungen)
+        config.video.style.font_size = int(font_size)
+        config.video.style.margin_v = int(margin_v)
+        config.video.ass.lead_time_seconds = float(lead_time)
+        config.video.ass.use_entry_cues = bool(use_entry_cues)
+        config.video.downscale_1080p = bool(downscale_1080p)
+        
+        pipeline = VideokePipeline(config=config, input_path=input_path, output_dir=output_dir, bg_visual=bg_visual)
+        
+        final_results = None
+        for status in pipeline.run_rendering(instrumental_path, timestamps, override_config=config, use_original_video=use_original_video):
+            if isinstance(status, str):
+                progress(0.8, desc=status)
+            elif isinstance(status, dict):
+                final_results = status
+                
+        if not final_results:
+            raise gr.Error("Fehler beim Rendering.")
+            
+        gr.Success("Video erfolgreich gerendert!")
+        return (
+            str(final_results["video"]),
+            gr.update(value=[str(final_results["video"]), str(final_results["instrumental"]), str(final_results["ass"])], visible=True)
+        )
+    except Exception as e:
+        if isinstance(e, gr.Error):
+            raise e
+        raise gr.Error(f"Fehler: {str(e)}")
 
 def export_wrapper(regions_json, media_paths, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p):
     try:
-        timestamps = json.loads(regions_json)
-    except Exception:
-        timestamps = []
+        gr.Info("Projekt-ZIP wird erstellt...")
+        try:
+            timestamps = json.loads(regions_json)
+        except Exception:
+            timestamps = []
+            
+        config_overrides = {
+            "color_ungesungen": color_ungesungen,
+            "color_gesungen": color_gesungen,
+            "font_size": font_size,
+            "lead_time": lead_time,
+            "margin_v": margin_v,
+            "use_entry_cues": use_entry_cues,
+            "downscale_1080p": downscale_1080p
+        }
         
-    config_overrides = {
-        "color_ungesungen": color_ungesungen,
-        "color_gesungen": color_gesungen,
-        "font_size": font_size,
-        "lead_time": lead_time,
-        "margin_v": margin_v,
-        "use_entry_cues": use_entry_cues,
-        "downscale_1080p": downscale_1080p
-    }
-    
-    zip_path = export_project(timestamps, media_paths, config_overrides)
-    return str(zip_path)
+        zip_path = export_project(timestamps, media_paths, config_overrides)
+        gr.Success("Projekt bereit zum Download!")
+        return str(zip_path)
+    except Exception as e:
+        if isinstance(e, gr.Error):
+            raise e
+        raise gr.Error(f"Fehler: {str(e)}")
 
 def import_wrapper(zip_file):
-    if not zip_file:
-        raise gr.Error("Keine Datei hochgeladen.")
-    media_paths, timestamps, config_overrides = import_project(zip_file.name)
-    
-    return (
-        media_paths,
-        json.dumps(timestamps),
-        config_overrides.get("color_ungesungen", "#FFFFFF"),
-        config_overrides.get("color_gesungen", "#00FFFF"),
-        config_overrides.get("font_size", 36),
-        config_overrides.get("lead_time", 1.5),
-        config_overrides.get("margin_v", 15),
-        config_overrides.get("use_entry_cues", True),
-        config_overrides.get("downscale_1080p", False),
-        gr.update(value="Vocals")
-    )
+    try:
+        if not zip_file:
+            raise gr.Error("Keine Datei hochgeladen.")
+        media_paths, timestamps, config_overrides = import_project(zip_file.name)
+        
+        gr.Success("Projekt erfolgreich geladen!")
+        return (
+            media_paths,
+            json.dumps(timestamps),
+            config_overrides.get("color_ungesungen", "#FFFFFF"),
+            config_overrides.get("color_gesungen", "#00FFFF"),
+            config_overrides.get("font_size", 36),
+            config_overrides.get("lead_time", 1.5),
+            config_overrides.get("margin_v", 15),
+            config_overrides.get("use_entry_cues", True),
+            config_overrides.get("downscale_1080p", False),
+            gr.update(value="Vocals")
+        )
+    except Exception as e:
+        if isinstance(e, gr.Error):
+            raise e
+        raise gr.Error(f"Fehler: {str(e)}")
 
-with gr.Blocks(theme=gr.themes.Soft()) as demo:
+custom_css = """
+.fullscreen-modal {
+    position: fixed !important;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background-color: rgba(17, 24, 39, 0.85);
+    backdrop-filter: blur(8px);
+    z-index: 9999 !important;
+    display: flex !important;
+    flex-direction: column; 
+    justify-content: center; align-items: center;
+}
+.fullscreen-modal.hide, .fullscreen-modal.hidden, .fullscreen-modal[hidden] {
+    display: none !important;
+}
+.modal-box {
+    background: rgba(31, 41, 55, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 40px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    text-align: center;
+    max-width: 500px;
+    width: 90%;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    animation: fadeIn 0.4s ease-out;
+}
+.modal-box h1 {
+    font-size: 2rem;
+    margin-bottom: 15px;
+    background: linear-gradient(to right, #4facfe 0%, #00f2fe 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.modal-box p {
+    font-size: 1.1rem;
+    color: #cbd5e1;
+    line-height: 1.5;
+}
+.pulse-icon {
+    display: inline-block;
+    animation: pulse 2s infinite;
+}
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+}
+@keyframes fadeIn {
+    from { opacity: 0; transform: translate(-50%, -40%); }
+    to { opacity: 1; transform: translate(-50%, -50%); }
+}
+"""
+
+with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
+    with gr.Column(visible=False, elem_classes=["fullscreen-modal"]) as loading_modal:
+        gr.HTML("""
+        <div class="modal-box">
+            <h1><span class="pulse-icon">🚀</span> Analyse läuft...</h1>
+            <p>Die KI trennt jetzt die Spuren und setzt die Timestamps.<br>Bitte einen Moment Geduld.</p>
+        </div>
+        """)
+        
     gr.Markdown("# 🎤 Auto-Videoke Creator (Human-in-the-Loop)")
     
     state_instrumental = gr.State()
@@ -180,7 +268,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     state_keep_vocals = gr.State()
     state_use_original_video = gr.State()
     
-    with gr.Tabs() as tabs:
+    with gr.Tabs(elem_id="main_tabs") as tabs:
         with gr.Tab("Schritt 1: Analyse", id="tab_analyse"):
             with gr.Row():
                 with gr.Column(scale=1):
@@ -219,7 +307,9 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                         btn_play = gr.Button("▶ Play/Pause")
                         btn_zoom_in = gr.Button("➕ Zoom In")
                         btn_zoom_out = gr.Button("➖ Zoom Out")
-                        btn_save = gr.Button("💾 Sync anwenden & Rendern", variant="primary")
+                        btn_save = gr.Button("💾 Sync anwenden & Rendern", variant="primary", elem_id="btn_save_sync")
+                        
+                    slider_speed = gr.Slider(minimum=0.25, maximum=2.0, value=1.0, step=0.25, label="Wiedergabegeschwindigkeit (nur Vorschau)")
                         
                     media_paths_state = gr.JSON(visible=False)
                     words_state = gr.JSON(visible=False)
@@ -308,9 +398,17 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     """
 
     extract_btn.click(
+        fn=lambda: (gr.update(selected="tab_editor"), gr.update(visible=True)),
+        inputs=None,
+        outputs=[tabs, loading_modal]
+    ).then(
         fn=start_extraction,
         inputs=[audio_in, bg_in, keep_vocals_cb, use_original_video_cb, is_duet_cb, hf_token_input, youtube_url, use_syllables_cb],
-        outputs=[words_state, media_paths_state, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video, tabs]
+        outputs=[words_state, media_paths_state, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video]
+    ).then(
+        fn=lambda: gr.update(visible=False),
+        inputs=None,
+        outputs=[loading_modal]
     ).then(
         fn=None,
         inputs=[media_paths_state, words_state],
@@ -349,6 +447,12 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         outputs=[video_out, files_out],
         js="""
         (dummy, inst, bg, aud, yt, keep, orig, sec, prim, fsize, lead, marg, cues, down) => {
+            const btn = document.querySelector('#btn_save_sync');
+            if(btn) {
+                const oldText = btn.innerText;
+                btn.innerText = "✅ Gespeichert!";
+                setTimeout(() => { btn.innerText = oldText; }, 2000);
+            }
             let data = [];
             if (window.regionsPlugin) {
                 data = window.regionsPlugin.getRegions().map(r => ({word: r.content, start: r.start, end: r.end}));
@@ -405,6 +509,12 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             }
         }
         """
+    )
+    
+    slider_speed.change(
+        fn=None, 
+        inputs=[slider_speed], 
+        js="(speed) => { if (window.ws) { window.ws.setPlaybackRate(speed); } }"
     )
 
 
