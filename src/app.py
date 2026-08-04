@@ -134,8 +134,7 @@ def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in
                 
         if not final_results:
             raise gr.Error("Fehler beim Rendering.")
-            
-        gr.Success("Video erfolgreich gerendert!")
+        gr.Info("Video erfolgreich gerendert!")
         return (
             str(final_results["video"]),
             gr.update(value=[str(final_results["video"]), str(final_results["instrumental"]), str(final_results["ass"])], visible=True)
@@ -164,7 +163,7 @@ def export_wrapper(regions_json, media_paths, color_ungesungen, color_gesungen, 
         }
         
         zip_path = export_project(timestamps, media_paths, config_overrides)
-        gr.Success("Projekt bereit zum Download!")
+        gr.Info("Projekt bereit zum Download!")
         return str(zip_path)
     except Exception as e:
         if isinstance(e, gr.Error):
@@ -177,7 +176,7 @@ def import_wrapper(zip_file):
             raise gr.Error("Keine Datei hochgeladen.")
         media_paths, timestamps, config_overrides = import_project(zip_file.name)
         
-        gr.Success("Projekt erfolgreich geladen!")
+        gr.Info("Projekt erfolgreich geladen!")
         return (
             media_paths,
             json.dumps(timestamps),
