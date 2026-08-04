@@ -102,7 +102,8 @@ class VideokePipeline:
 
             yield {
                 "instrumental": instrumental_path,
-                "timestamps": timestamps
+                "timestamps": timestamps,
+                "vocals": vocals_path
             }
 
         except Exception as e:

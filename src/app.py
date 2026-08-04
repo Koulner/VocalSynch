@@ -8,6 +8,7 @@ sys.path.insert(0, str(project_root))
 
 import gradio as gr
 import pandas as pd
+import json
 from src.main import prepare_input, VideokePipeline
 from src.core.config import VideokeConfig
 from src.models.domain import WordTimestamp
@@ -52,6 +53,7 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
     
     instrumental_path = None
     timestamps = []
+    vocals_path = None
     
     for status in pipeline.run_extraction(keep_vocals=keep_vocals):
         if isinstance(status, str):
@@ -59,14 +61,21 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
         elif isinstance(status, dict):
             instrumental_path = status["instrumental"]
             timestamps = status["timestamps"]
+            vocals_path = status.get("vocals", actual_audio)
             
     if not instrumental_path or not timestamps:
         raise gr.Error("Ein Fehler ist bei der Extraktion aufgetreten.")
         
-    df_data = pd.DataFrame([[wt.word, wt.start, wt.end, wt.speaker or ""] for wt in timestamps], columns=["Wort", "Start", "Ende", "Sprecher"])
+    words_list = [{"word": wt.word, "start": wt.start, "end": wt.end, "speaker": wt.speaker or ""} for wt in timestamps]
+    media_paths = {
+        "Vocals": str(vocals_path),
+        "Instrumental": str(instrumental_path),
+        "Original": str(actual_audio)
+    }
     
     return (
-        df_data,
+        words_list,
+        media_paths,
         str(instrumental_path), 
         str(actual_bg_visual) if actual_bg_visual else None,
         str(actual_audio),
@@ -75,9 +84,9 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
         gr.Tabs(selected="tab_editor")
     )
 
-def start_rendering(df, instrumental_path_str, bg_visual_str, audio_in_str, youtube_url_str, keep_vocals, use_original_video,
+def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in_str, youtube_url_str, keep_vocals, use_original_video,
                    secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, progress=gr.Progress()):
-    if not instrumental_path_str or df is None:
+    if not instrumental_path_str or not regions_json:
         raise gr.Error("Keine Extraktionsdaten gefunden. Bitte starte bei Schritt 1.")
         
     instrumental_path = Path(instrumental_path_str)
@@ -87,13 +96,17 @@ def start_rendering(df, instrumental_path_str, bg_visual_str, audio_in_str, yout
     
     config = VideokeConfig.load("configs/default.yaml")
     
+    try:
+        regions_data = json.loads(regions_json)
+    except Exception:
+        regions_data = []
+        
     timestamps = []
-    for _, row in df.iterrows():
-        word = str(row["Wort"])
-        start = float(row["Start"])
-        end = float(row["Ende"])
-        speaker = str(row["Sprecher"]) if "Sprecher" in row and pd.notna(row["Sprecher"]) and str(row["Sprecher"]).strip() != "" else None
-        timestamps.append(WordTimestamp(word=word, start=start, end=end, speaker=speaker))
+    for r in regions_data:
+        word = str(r.get("word", ""))
+        start = float(r.get("start", 0))
+        end = float(r.get("end", 0))
+        timestamps.append(WordTimestamp(word=word, start=start, end=end, speaker=None))
         
     config.video.style.primary_colour = hex_to_ass_color(secondary_color)
     config.video.style.secondary_colour = hex_to_ass_color(primary_color)
@@ -157,12 +170,18 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             with gr.Row():
                 with gr.Column(scale=2):
                     gr.Markdown("### WhisperX Timestamps Editor")
-                    words_df = gr.Dataframe(
-                        headers=["Wort", "Start", "Ende", "Sprecher"],
-                        datatype=["str", "number", "number", "str"],
-                        interactive=True,
-                        wrap=True
-                    )
+                    track_selector = gr.Radio(choices=["Vocals", "Instrumental", "Original"], value="Vocals", label="Audiospur wechseln")
+                    gr.HTML('<div id="waveform-container" style="width: 100%; border: 1px solid #ccc; background: #1f2937; border-radius: 8px;"></div><div id="timeline-container"></div>')
+                    
+                    with gr.Row():
+                        btn_play = gr.Button("▶ Play/Pause")
+                        btn_zoom_in = gr.Button("➕ Zoom In")
+                        btn_zoom_out = gr.Button("➖ Zoom Out")
+                        btn_save = gr.Button("💾 Sync anwenden & Rendern", variant="primary")
+                        
+                    media_paths_state = gr.JSON(visible=False)
+                    words_state = gr.JSON(visible=False)
+                    dummy_render_input = gr.Textbox(visible=False)
                     
                 with gr.Column(scale=1):
                     gr.Markdown("### Visuelle Settings")
@@ -174,27 +193,130 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                     downscale_1080p_cb = gr.Checkbox(label="Video für schnelleres Rendering auf max. 1080p herunterskalieren (behält Seitenverhältnis)", value=False)
                     margin_v = gr.Slider(minimum=0, maximum=50, step=1, label="Abstand von unten (%)", value=15)
                     
-                    render_btn = gr.Button("Video jetzt rendern", variant="primary")
-                    
             with gr.Row():
                 with gr.Column():
                     video_out = gr.Video(label="Dein Karaoke-Video")
                     files_out = gr.File(label="Generierte Assets", visible=False, file_count="multiple")
             
+    INIT_JS = """
+    async (media_paths, words) => {
+        if (!window.WaveSurfer) {
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js';
+            document.head.appendChild(script);
+            
+            const pluginScript = document.createElement('script');
+            pluginScript.src = 'https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js';
+            document.head.appendChild(pluginScript);
+            
+            const timelineScript = document.createElement('script');
+            timelineScript.src = 'https://unpkg.com/wavesurfer.js@7/dist/plugins/timeline.min.js';
+            document.head.appendChild(timelineScript);
+            
+            await new Promise(r => {
+                let loaded = 0;
+                const onload = () => { loaded++; if(loaded === 3) r(); };
+                script.onload = onload;
+                pluginScript.onload = onload;
+                timelineScript.onload = onload;
+            });
+        }
+
+        if (window.ws) {
+            window.ws.destroy();
+        }
+
+        window.ws = WaveSurfer.create({
+            container: '#waveform-container',
+            waveColor: '#8b5cf6',
+            progressColor: '#c4b5fd',
+            minPxPerSec: 100,
+            height: 128
+        });
+
+        const regionsPlugin = WaveSurfer.Regions.create();
+        window.regionsPlugin = regionsPlugin;
+        window.ws.registerPlugin(regionsPlugin);
+        
+        const timelinePlugin = WaveSurfer.Timeline.create({
+            container: '#timeline-container',
+        });
+        window.ws.registerPlugin(timelinePlugin);
+        
+        if (media_paths && media_paths["Vocals"]) {
+            window.ws.load('/file=' + media_paths["Vocals"]);
+        }
+        
+        window.ws.once('decode', () => {
+            if (words && words.length > 0) {
+                words.forEach(w => {
+                    regionsPlugin.addRegion({
+                        start: w.start,
+                        end: w.end,
+                        content: w.word,
+                        color: 'rgba(255, 255, 0, 0.4)',
+                        drag: true,
+                        resize: true
+                    });
+                });
+            }
+        });
+        return [];
+    }
+    """
+
     extract_btn.click(
         fn=start_extraction,
         inputs=[audio_in, bg_in, keep_vocals_cb, use_original_video_cb, is_duet_cb, hf_token_input, youtube_url, use_syllables_cb],
-        outputs=[words_df, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video, tabs]
+        outputs=[words_state, media_paths_state, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video, tabs]
+    ).then(
+        fn=None,
+        inputs=[media_paths_state, words_state],
+        js=INIT_JS
     )
     
-    render_btn.click(
+    btn_play.click(fn=None, js="() => { if (window.ws) window.ws.playPause(); }")
+    btn_zoom_in.click(fn=None, js="() => { if (window.ws) window.ws.zoom(window.ws.options.minPxPerSec * 1.5); }")
+    btn_zoom_out.click(fn=None, js="() => { if (window.ws) window.ws.zoom(window.ws.options.minPxPerSec / 1.5); }")
+    
+    track_selector.change(
+        fn=None,
+        inputs=[track_selector, media_paths_state],
+        js="""
+        (track, media_paths) => {
+            if (window.ws && window.regionsPlugin && media_paths && media_paths[track]) {
+                const regions = window.regionsPlugin.getRegions().map(r => ({start: r.start, end: r.end, content: r.content, color: r.color}));
+                
+                window.ws.once('decode', () => {
+                    window.regionsPlugin.clearRegions();
+                    regions.forEach(r => window.regionsPlugin.addRegion(r));
+                });
+                
+                window.ws.load('/file=' + media_paths[track]);
+            }
+        }
+        """
+    )
+    
+    btn_save.click(
         fn=start_rendering,
         inputs=[
-            words_df, state_instrumental, state_bg_visual, state_audio_in, youtube_url, state_keep_vocals, state_use_original_video,
+            dummy_render_input, state_instrumental, state_bg_visual, state_audio_in, youtube_url, state_keep_vocals, state_use_original_video,
             secondary_color, primary_color, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb
         ],
-        outputs=[video_out, files_out]
+        outputs=[video_out, files_out],
+        js="""
+        (dummy, inst, bg, aud, yt, keep, orig, sec, prim, fsize, lead, marg, cues, down) => {
+            let data = [];
+            if (window.regionsPlugin) {
+                data = window.regionsPlugin.getRegions().map(r => ({word: r.content, start: r.start, end: r.end}));
+            }
+            return [JSON.stringify(data), inst, bg, aud, yt, keep, orig, sec, prim, fsize, lead, marg, cues, down];
+        }
+        """
     )
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", share=False)
+    import os
+    allowed = str(Path("ergebnis_ui").absolute())
+    demo.launch(server_name="0.0.0.0", share=False, allowed_paths=[allowed])
