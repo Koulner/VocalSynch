@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  videoke-nvidia:
+    profiles: ["nvidia"]
+    build:
+      context: .
+      dockerfile: Dockerfile.nvidia
+    volumes:
+      - ./configs:/app/configs
+      - ./projects:/app/projects
+    ports:
+      - "7860:7860"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  videoke-amd:
+    profiles: ["amd"]
+    build:
+      context: .
+      dockerfile: Dockerfile.amd
+    volumes:
+      - ./configs:/app/configs
+      - ./projects:/app/projects
+    ports:
+      - "7860:7860"
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+
+  videoke-cpu:
+    profiles: ["cpu"]
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    volumes:
+      - ./configs:/app/configs
+      - ./projects:/app/projects
+    ports:
+      - "7860:7860"
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
