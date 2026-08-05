@@ -291,6 +291,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                         
                     track_selector = gr.Radio(choices=["Vocals", "Instrumental", "Original"], value="Vocals", label="Audiospur wechseln")
                     gr.HTML('<div id="waveform-container" style="width: 100%; border: 1px solid #ccc; background: #1f2937; border-radius: 8px;"></div><div id="timeline-container"></div>')
+                    gr.Markdown("*💡 Tipp: Mache einen Doppelklick auf einen Text-Block in der Timeline, um das Wort zu bearbeiten.*")
                     
                     with gr.Row():
                         btn_play = gr.Button("▶ Play/Pause")
@@ -360,6 +361,20 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
             window.ws.load('/file=' + media_paths["Vocals"]);
         }
         
+        window.regionsPlugin.on('region-double-clicked', (region, e) => {
+            e.stopPropagation(); // Verhindert, dass das Event an andere Elemente weitergegeben wird
+            let currentText = "";
+            if (typeof region.content === 'string') {
+                currentText = region.content;
+            } else if (region.element) {
+                currentText = region.element.innerText || region.element.textContent;
+            }
+            const newText = prompt("Wort korrigieren:", currentText);
+            if (newText !== null && newText.trim() !== "") {
+                region.setOptions({ content: newText.trim() });
+            }
+        });
+        
         window.ws.once('decode', () => {
             if (words && words.length > 0) {
                 words.forEach(w => {
@@ -426,6 +441,20 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
         if (media_paths && media_paths[track]) {
             window.ws.load('/file=' + media_paths[track]);
         }
+        
+        window.regionsPlugin.on('region-double-clicked', (region, e) => {
+            e.stopPropagation(); // Verhindert, dass das Event an andere Elemente weitergegeben wird
+            let currentText = "";
+            if (typeof region.content === 'string') {
+                currentText = region.content;
+            } else if (region.element) {
+                currentText = region.element.innerText || region.element.textContent;
+            }
+            const newText = prompt("Wort korrigieren:", currentText);
+            if (newText !== null && newText.trim() !== "") {
+                region.setOptions({ content: newText.trim() });
+            }
+        });
         
         window.ws.once('decode', () => {
             if (words && words.length > 0) {
