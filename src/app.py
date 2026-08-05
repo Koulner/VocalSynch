@@ -332,25 +332,17 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
     INIT_JS = """
     async (media_paths, words) => {
         if (!window.WaveSurfer) {
-            const script = document.createElement('script');
-            script.src = 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js';
-            document.head.appendChild(script);
-            
-            const pluginScript = document.createElement('script');
-            pluginScript.src = 'https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js';
-            document.head.appendChild(pluginScript);
-            
-            const timelineScript = document.createElement('script');
-            timelineScript.src = 'https://unpkg.com/wavesurfer.js@7/dist/plugins/timeline.min.js';
-            document.head.appendChild(timelineScript);
-            
-            await new Promise(r => {
-                let loaded = 0;
-                const onload = () => { loaded++; if(loaded === 3) r(); };
-                script.onload = onload;
-                pluginScript.onload = onload;
-                timelineScript.onload = onload;
+            const loadScript = (src) => new Promise(r => {
+                const s = document.createElement('script');
+                s.src = src;
+                s.onload = r;
+                document.head.appendChild(s);
             });
+            await loadScript('https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js');
+            await Promise.all([
+                loadScript('https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js'),
+                loadScript('https://unpkg.com/wavesurfer.js@7/dist/plugins/timeline.min.js')
+            ]);
         }
 
         if (window.ws) {
@@ -381,10 +373,78 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
         window.ws.once('decode', () => {
             if (words && words.length > 0) {
                 words.forEach(w => {
+                    const wordText = String(w.word || w.text || "");
                     regionsPlugin.addRegion({
                         start: w.start,
                         end: w.end,
-                        content: w.word,
+                        content: wordText,
+                        color: 'rgba(255, 255, 0, 0.4)',
+                        drag: true,
+                        resize: true
+                    });
+                });
+            }
+        });
+        return [];
+    }
+    """
+
+    IMPORT_JS = """
+    async (media_paths, words_data, track) => {
+        let words = [];
+        try {
+            words = typeof words_data === 'string' ? JSON.parse(words_data || "[]") : (words_data || []);
+        } catch (e) {
+            console.error("Error parsing words:", e);
+        }
+        
+        if (!window.WaveSurfer) {
+            const loadScript = (src) => new Promise(r => {
+                const s = document.createElement('script');
+                s.src = src;
+                s.onload = r;
+                document.head.appendChild(s);
+            });
+            await loadScript('https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js');
+            await Promise.all([
+                loadScript('https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js'),
+                loadScript('https://unpkg.com/wavesurfer.js@7/dist/plugins/timeline.min.js')
+            ]);
+        }
+
+        if (window.ws) {
+            window.ws.destroy();
+        }
+
+        window.ws = WaveSurfer.create({
+            container: '#waveform-container',
+            waveColor: '#8b5cf6',
+            progressColor: '#c4b5fd',
+            minPxPerSec: 100,
+            height: 128
+        });
+
+        const regionsPlugin = WaveSurfer.Regions.create();
+        window.regionsPlugin = regionsPlugin;
+        window.ws.registerPlugin(regionsPlugin);
+        
+        const timelinePlugin = WaveSurfer.Timeline.create({
+            container: '#timeline-container',
+        });
+        window.ws.registerPlugin(timelinePlugin);
+        
+        if (media_paths && media_paths[track]) {
+            window.ws.load('/file=' + media_paths[track]);
+        }
+        
+        window.ws.once('decode', () => {
+            if (words && words.length > 0) {
+                words.forEach(w => {
+                    const wordText = String(w.word || w.text || "");
+                    regionsPlugin.addRegion({
+                        start: w.start,
+                        end: w.end,
+                        content: wordText,
                         color: 'rgba(255, 255, 0, 0.4)',
                         drag: true,
                         resize: true
@@ -424,11 +484,31 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
         js="""
         (track, media_paths) => {
             if (window.ws && window.regionsPlugin && media_paths && media_paths[track]) {
-                const regions = window.regionsPlugin.getRegions().map(r => ({start: r.start, end: r.end, content: r.content, color: r.color}));
+                const regions = window.regionsPlugin.getRegions().map(r => {
+                    let textContent = "";
+                    if (typeof r.content === 'string') {
+                        textContent = r.content;
+                    } else if (r.content instanceof HTMLElement) {
+                        textContent = r.content.innerText || r.content.textContent;
+                    } else if (r.element) {
+                        textContent = r.element.innerText || r.element.textContent;
+                    }
+                    return {start: r.start, end: r.end, text: textContent, color: r.color};
+                });
                 
                 window.ws.once('decode', () => {
                     window.regionsPlugin.clearRegions();
-                    regions.forEach(r => window.regionsPlugin.addRegion(r));
+                    regions.forEach(r => {
+                        const wordText = String(r.text || "");
+                        window.regionsPlugin.addRegion({
+                            start: r.start,
+                            end: r.end,
+                            content: wordText,
+                            color: r.color,
+                            drag: true,
+                            resize: true
+                        });
+                    });
                 });
                 
                 window.ws.load('/file=' + media_paths[track]);
@@ -454,7 +534,17 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
             }
             let data = [];
             if (window.regionsPlugin) {
-                data = window.regionsPlugin.getRegions().map(r => ({word: r.content, start: r.start, end: r.end}));
+                data = window.regionsPlugin.getRegions().map(r => {
+                    let textContent = "";
+                    if (typeof r.content === 'string') {
+                        textContent = r.content;
+                    } else if (r.content instanceof HTMLElement) {
+                        textContent = r.content.innerText || r.content.textContent;
+                    } else if (r.element) {
+                        textContent = r.element.innerText || r.element.textContent;
+                    }
+                    return {word: textContent, start: r.start, end: r.end};
+                });
             }
             return [JSON.stringify(data), inst, bg, aud, yt, keep, orig, sec, prim, fsize, lead, marg, cues, down];
         }
@@ -469,7 +559,17 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
         (dummy, media_paths, cu, cg, fsize, lead, marg, cues, down) => {
             let data = [];
             if (window.regionsPlugin) {
-                data = window.regionsPlugin.getRegions().map(r => ({word: r.content, start: r.start, end: r.end}));
+                data = window.regionsPlugin.getRegions().map(r => {
+                    let textContent = "";
+                    if (typeof r.content === 'string') {
+                        textContent = r.content;
+                    } else if (r.content instanceof HTMLElement) {
+                        textContent = r.content.innerText || r.content.textContent;
+                    } else if (r.element) {
+                        textContent = r.element.innerText || r.element.textContent;
+                    }
+                    return {word: textContent, start: r.start, end: r.end};
+                });
             }
             return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, marg, cues, down];
         }
@@ -483,31 +583,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
     ).then(
         fn=None,
         inputs=[media_paths_state, words_state, track_selector],
-        js="""
-        (media_paths, words_json, track) => {
-            if (!window.ws) return;
-            const words = JSON.parse(words_json || "[]");
-            
-            if (media_paths && media_paths[track]) {
-                window.ws.once('decode', () => {
-                    if (window.regionsPlugin) {
-                        window.regionsPlugin.clearRegions();
-                        words.forEach(w => {
-                            window.regionsPlugin.addRegion({
-                                start: w.start,
-                                end: w.end,
-                                content: w.word,
-                                color: 'rgba(255, 255, 0, 0.4)',
-                                drag: true,
-                                resize: true
-                            });
-                        });
-                    }
-                });
-                window.ws.load('/file=' + media_paths[track]);
-            }
-        }
-        """
+        js=IMPORT_JS
     )
     
     slider_speed.change(

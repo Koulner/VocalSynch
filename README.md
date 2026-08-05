@@ -99,3 +99,12 @@ Folgende Parameter kannst du dort dauerhaft anpassen:
 - **Modell-Größen**: Welche Demucs/WhisperX-Modelle sollen geladen werden (z.B. `large-v2` vs `base`)?
 - **Styles**: Standardfarben für das UI und die Untertitel.
 - **Hardware-Encoding**: Fallback-Optionen wie der bevorzugte Video-Encoder (`h264_nvenc` vs `libx264`).
+
+---
+
+## 📜 License
+
+Dieses Projekt steht unter der **MIT License**.  
+Wir haben dieses Tool für die Community gebaut – du darfst es völlig frei verwenden, verändern und sogar kommerziell nutzen. 
+
+Pull Requests, Bug-Reports und Contributions sind jederzeit herzlich willkommen!
