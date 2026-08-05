@@ -12,7 +12,6 @@ import json
 from src.main import prepare_input, VideokePipeline
 from src.core.config import VideokeConfig
 from src.models.domain import WordTimestamp
-from src.utils.downloader import YouTubeDownloader
 from src.core.project_manager import export_project, import_project
 
 def hex_to_ass_color(hex_rgb: str) -> str:
@@ -23,20 +22,15 @@ def hex_to_ass_color(hex_rgb: str) -> str:
         return f"&H00{b}{g}{r}"
     return "&H00FFFFFF"
 
-def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_duet, hf_token, youtube_url, use_syllables, progress=gr.Progress()):
+def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_duet, hf_token, use_syllables, progress=gr.Progress()):
     try:
-        if not audio_input and not youtube_url:
-            raise gr.Error("Bitte lade eine Audio- oder Videodatei hoch oder gib einen YouTube-Link an.")
+        if not audio_input:
+            raise gr.Error("Bitte lade eine Audio- oder Videodatei hoch.")
             
         output_dir = Path("ergebnis_ui")
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        if youtube_url:
-            progress(0.0, desc="YouTube Video wird heruntergeladen...")
-            downloader = YouTubeDownloader()
-            input_path = downloader.download(youtube_url, output_dir, video_mode=use_original_video)
-        else:
-            input_path = Path(audio_input)
+        input_path = Path(audio_input)
             
         bg_visual = Path(bg_input) if bg_input else None
         
@@ -89,7 +83,7 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
             raise e
         raise gr.Error(f"Fehler: {str(e)}")
 
-def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in_str, youtube_url_str, keep_vocals, use_original_video,
+def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in_str, keep_vocals, use_original_video,
                    color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, progress=gr.Progress()):
     try:
         gr.Info("Timestamps übernommen! Starte Video-Rendering...")
@@ -271,11 +265,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
         with gr.Tab("Schritt 1: Analyse", id="tab_analyse"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    with gr.Tabs():
-                        with gr.Tab("Lokale Datei"):
-                            audio_in = gr.File(label="Song (MP3/WAV/MP4)", file_types=[".mp3", ".wav", ".flac", ".mp4", ".mov", ".mkv"])
-                        with gr.Tab("YouTube Link"):
-                            youtube_url = gr.Textbox(label="YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
+                    audio_in = gr.File(label="Song (MP3/WAV/MP4)", file_types=[".mp3", ".wav", ".flac", ".mp4", ".mov", ".mkv"])
                             
                     bg_in = gr.Image(type="filepath", label="Hintergrundbild (Optional)")
                     
@@ -462,7 +452,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
         outputs=[tabs, loading_modal]
     ).then(
         fn=start_extraction,
-        inputs=[audio_in, bg_in, keep_vocals_cb, use_original_video_cb, is_duet_cb, hf_token_input, youtube_url, use_syllables_cb],
+        inputs=[audio_in, bg_in, keep_vocals_cb, use_original_video_cb, is_duet_cb, hf_token_input, use_syllables_cb],
         outputs=[words_state, media_paths_state, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video]
     ).then(
         fn=lambda: gr.update(visible=False),
@@ -520,12 +510,12 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
     btn_save.click(
         fn=start_rendering,
         inputs=[
-            dummy_render_input, state_instrumental, state_bg_visual, state_audio_in, youtube_url, state_keep_vocals, state_use_original_video,
+            dummy_render_input, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video,
             color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb
         ],
         outputs=[video_out, files_out],
         js="""
-        (dummy, inst, bg, aud, yt, keep, orig, sec, prim, fsize, lead, marg, cues, down) => {
+        (dummy, inst, bg, aud, keep, orig, sec, prim, fsize, lead, marg, cues, down) => {
             const btn = document.querySelector('#btn_save_sync');
             if(btn) {
                 const oldText = btn.innerText;
@@ -546,7 +536,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                     return {word: textContent, start: r.start, end: r.end};
                 });
             }
-            return [JSON.stringify(data), inst, bg, aud, yt, keep, orig, sec, prim, fsize, lead, marg, cues, down];
+            return [JSON.stringify(data), inst, bg, aud, keep, orig, sec, prim, fsize, lead, marg, cues, down];
         }
         """
     )

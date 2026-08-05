@@ -7,7 +7,6 @@ rich
 torchaudio
 pyyaml
 pandas
-yt-dlp
 pyphen
 
 # ==========================================
