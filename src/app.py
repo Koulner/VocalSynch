@@ -291,7 +291,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                         
                     track_selector = gr.Radio(choices=["Vocals", "Instrumental", "Original"], value="Vocals", label="Audiospur wechseln")
                     gr.HTML('<div id="waveform-container" style="width: 100%; border: 1px solid #ccc; background: #1f2937; border-radius: 8px;"></div><div id="timeline-container"></div>')
-                    gr.Markdown("*💡 Tipp: Mache einen Doppelklick auf einen Text-Block in der Timeline, um das Wort zu bearbeiten.*")
+                    gr.Markdown("*💡 Editor-Controls: Doppelklick zum Ändern | Ziehen für neues Wort | [Entf] zum Löschen | [Strg+Z] Rückgängig | [Strg+Y] Wiederholen.*")
                     
                     with gr.Row():
                         btn_play = gr.Button("▶ Play/Pause")
@@ -361,8 +361,91 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
             window.ws.load('/file=' + media_paths["Vocals"]);
         }
         
+        window.historyStack = [];
+        window.historyIndex = -1;
+        window.isRestoring = false;
+
+        window.saveState = function() {
+            if (window.isRestoring) return;
+            const currentState = regionsPlugin.getRegions().map(r => {
+                let text = "";
+                if (typeof r.content === 'string') text = r.content;
+                else if (r.element) text = r.element.innerText || r.element.textContent;
+                return { start: r.start, end: r.end, content: text };
+            });
+            window.historyStack = window.historyStack.slice(0, window.historyIndex + 1);
+            window.historyStack.push(currentState);
+            window.historyIndex++;
+        };
+
+        window.loadState = function(index) {
+            if (index < 0 || index >= window.historyStack.length) return;
+            window.isRestoring = true;
+            regionsPlugin.clearRegions();
+            const state = window.historyStack[index];
+            state.forEach(item => {
+                regionsPlugin.addRegion({
+                    start: item.start,
+                    end: item.end,
+                    content: item.content,
+                    color: 'rgba(255, 255, 0, 0.4)',
+                    drag: true,
+                    resize: true
+                });
+            });
+            window.historyIndex = index;
+            setTimeout(() => { window.isRestoring = false; }, 50);
+        };
+
+        regionsPlugin.enableDragSelection({
+            color: 'rgba(255, 255, 0, 0.4)'
+        });
+
+        regionsPlugin.on('region-created', (region) => {
+            if (region.content) return;
+            const newText = prompt("Neues Wort für diesen Bereich eingeben:");
+            if (newText !== null && newText.trim() !== "") {
+                region.setOptions({ content: newText.trim(), drag: true, resize: true });
+                window.saveState();
+            } else {
+                region.remove();
+            }
+        });
+
+        window.activeRegion = null;
+        regionsPlugin.on('region-clicked', (region, e) => {
+            e.stopPropagation();
+            window.activeRegion = region;
+        });
+
+        if (!window.ws_keydown_listener) {
+            window.ws_keydown_listener = (e) => {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                
+                if (e.ctrlKey || e.metaKey) {
+                    if (e.key.toLowerCase() === 'z') {
+                        e.preventDefault();
+                        if (e.shiftKey) {
+                            window.loadState(window.historyIndex + 1);
+                        } else {
+                            window.loadState(window.historyIndex - 1);
+                        }
+                    } else if (e.key.toLowerCase() === 'y') {
+                        e.preventDefault();
+                        window.loadState(window.historyIndex + 1);
+                    }
+                }
+                
+                if ((e.key === 'Backspace' || e.key === 'Delete') && window.activeRegion) {
+                    window.activeRegion.remove();
+                    window.activeRegion = null;
+                }
+            };
+            document.addEventListener('keydown', window.ws_keydown_listener);
+        }
+
         window.regionsPlugin.on('region-double-clicked', (region, e) => {
-            e.stopPropagation(); // Verhindert, dass das Event an andere Elemente weitergegeben wird
+            e.stopPropagation();
             let currentText = "";
             if (typeof region.content === 'string') {
                 currentText = region.content;
@@ -372,9 +455,13 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
             const newText = prompt("Wort korrigieren:", currentText);
             if (newText !== null && newText.trim() !== "") {
                 region.setOptions({ content: newText.trim() });
+                window.saveState();
             }
         });
         
+        regionsPlugin.on('region-update-end', window.saveState);
+        regionsPlugin.on('region-removed', window.saveState);
+
         window.ws.once('decode', () => {
             if (words && words.length > 0) {
                 words.forEach(w => {
@@ -389,6 +476,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                     });
                 });
             }
+            setTimeout(window.saveState, 500);
         });
         return [];
     }
@@ -442,8 +530,91 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
             window.ws.load('/file=' + media_paths[track]);
         }
         
+        window.historyStack = [];
+        window.historyIndex = -1;
+        window.isRestoring = false;
+
+        window.saveState = function() {
+            if (window.isRestoring) return;
+            const currentState = regionsPlugin.getRegions().map(r => {
+                let text = "";
+                if (typeof r.content === 'string') text = r.content;
+                else if (r.element) text = r.element.innerText || r.element.textContent;
+                return { start: r.start, end: r.end, content: text };
+            });
+            window.historyStack = window.historyStack.slice(0, window.historyIndex + 1);
+            window.historyStack.push(currentState);
+            window.historyIndex++;
+        };
+
+        window.loadState = function(index) {
+            if (index < 0 || index >= window.historyStack.length) return;
+            window.isRestoring = true;
+            regionsPlugin.clearRegions();
+            const state = window.historyStack[index];
+            state.forEach(item => {
+                regionsPlugin.addRegion({
+                    start: item.start,
+                    end: item.end,
+                    content: item.content,
+                    color: 'rgba(255, 255, 0, 0.4)',
+                    drag: true,
+                    resize: true
+                });
+            });
+            window.historyIndex = index;
+            setTimeout(() => { window.isRestoring = false; }, 50);
+        };
+
+        regionsPlugin.enableDragSelection({
+            color: 'rgba(255, 255, 0, 0.4)'
+        });
+
+        regionsPlugin.on('region-created', (region) => {
+            if (region.content) return;
+            const newText = prompt("Neues Wort für diesen Bereich eingeben:");
+            if (newText !== null && newText.trim() !== "") {
+                region.setOptions({ content: newText.trim(), drag: true, resize: true });
+                window.saveState();
+            } else {
+                region.remove();
+            }
+        });
+
+        window.activeRegion = null;
+        regionsPlugin.on('region-clicked', (region, e) => {
+            e.stopPropagation();
+            window.activeRegion = region;
+        });
+
+        if (!window.ws_keydown_listener) {
+            window.ws_keydown_listener = (e) => {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                
+                if (e.ctrlKey || e.metaKey) {
+                    if (e.key.toLowerCase() === 'z') {
+                        e.preventDefault();
+                        if (e.shiftKey) {
+                            window.loadState(window.historyIndex + 1);
+                        } else {
+                            window.loadState(window.historyIndex - 1);
+                        }
+                    } else if (e.key.toLowerCase() === 'y') {
+                        e.preventDefault();
+                        window.loadState(window.historyIndex + 1);
+                    }
+                }
+                
+                if ((e.key === 'Backspace' || e.key === 'Delete') && window.activeRegion) {
+                    window.activeRegion.remove();
+                    window.activeRegion = null;
+                }
+            };
+            document.addEventListener('keydown', window.ws_keydown_listener);
+        }
+
         window.regionsPlugin.on('region-double-clicked', (region, e) => {
-            e.stopPropagation(); // Verhindert, dass das Event an andere Elemente weitergegeben wird
+            e.stopPropagation();
             let currentText = "";
             if (typeof region.content === 'string') {
                 currentText = region.content;
@@ -453,9 +624,13 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
             const newText = prompt("Wort korrigieren:", currentText);
             if (newText !== null && newText.trim() !== "") {
                 region.setOptions({ content: newText.trim() });
+                window.saveState();
             }
         });
         
+        regionsPlugin.on('region-update-end', window.saveState);
+        regionsPlugin.on('region-removed', window.saveState);
+
         window.ws.once('decode', () => {
             if (words && words.length > 0) {
                 words.forEach(w => {
@@ -470,6 +645,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                     });
                 });
             }
+            setTimeout(window.saveState, 500);
         });
         return [];
     }
