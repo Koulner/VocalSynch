@@ -31,9 +31,6 @@ def generate_karaoke_ass(timestamps: list[WordTimestamp], output_path: Path, con
     lines = []
     current_line_words = []
     
-    max_pause = config.video.ass.max_pause_seconds
-    max_words = config.video.ass.max_words_per_line
-    
     # Wort-Gruppierung (User-gesteuert via line_break)
     for wt in timestamps:
         if not current_line_words:

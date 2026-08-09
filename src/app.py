@@ -230,6 +230,25 @@ def import_wrapper(zip_file):
         raise gr.Error(f"Fehler: {str(e)}")
 
 custom_css = """
+#preview-monitor {
+    width: 100%; aspect-ratio: 16/9; max-height: 400px;
+    background-color: #0f172a; /* Schiefergrau dunkel */
+    border: 2px solid #1e293b; border-radius: 8px;
+    display: flex; justify-content: center; align-items: center;
+    overflow: hidden; position: relative; margin-bottom: 16px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+}
+#preview-text-container {
+    text-align: center; color: white; font-size: 2.5rem;
+    font-family: 'Segoe UI', sans-serif; font-weight: bold;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+}
+.preview-word { display: inline-block; margin: 0 6px; transition: transform 0.1s ease; }
+/* Styles für das aktive Wort */
+.word-active-karaoke { color: #10b981; } /* Smaragdgrün */
+.word-active-popup { color: #10b981; transform: scale(1.25); }
+.word-selected { border-bottom: 3px solid #3b82f6; padding-bottom: 2px; }
+
 .fullscreen-modal {
     position: fixed !important;
     top: 0; left: 0; width: 100vw; height: 100vh;
@@ -349,6 +368,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                         btn_save_as_project = gr.Button("📁 Speichern unter (Duplizieren)")
                         
                     track_selector = gr.Radio(choices=["Vocals", "Instrumental", "Original"], value="Vocals", label="Audiospur wechseln")
+                    gr.HTML('<div id="preview-monitor"><div id="preview-text-container"></div></div>')
                     gr.HTML('<div id="waveform-container" style="width: 100%; border: 1px solid #ccc; background: #1f2937; border-radius: 8px;"></div><div id="timeline-container"></div>')
                     gr.Markdown("*💡 Editor-Controls: Doppelklick zum Ändern | Ziehen für neues Wort | [Entf] zum Löschen | [Enter] Zeilenumbruch umschalten (Blau = Start einer neuen Zeile) | [Strg+Z] Rückgängig*")
                     
@@ -356,6 +376,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                         btn_play = gr.Button("▶ Play/Pause")
                         btn_zoom_in = gr.Button("➕ Zoom In")
                         btn_zoom_out = gr.Button("➖ Zoom Out")
+                        btn_auto_chunking = gr.Button("🔄 Auto-Umbruch")
                         btn_save = gr.Button("💾 Sync anwenden & Rendern", variant="primary", elem_id="btn_save_sync")
                         
                     with gr.Row():
@@ -480,11 +501,34 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
         regionsPlugin.on('region-clicked', (region, e) => {
             e.stopPropagation();
             window.activeRegion = region;
+            if (window.updatePreviewMonitor) window.updatePreviewMonitor();
         });
 
         if (!window.ws_keydown_listener) {
             window.ws_keydown_listener = (e) => {
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                
+                // TAB: Springe zum nächsten/vorherigen blauen Block
+                if (e.key === 'Tab') {
+                    e.preventDefault();
+                    if (!window.ws || !window.ws.plugins[0]) return;
+                    const time = window.ws.getCurrentTime();
+                    const regions = window.ws.plugins[0].getRegions().sort((a,b) => parseFloat(a.start) - parseFloat(b.start));
+                    
+                    let targetBreak = null;
+                    if (e.shiftKey) { // Shift+Tab (Zurück)
+                        let breaks = regions.filter(r => parseFloat(r.start) < time - 0.2 && (r.data?.isLineBreak || r.customLineBreak || (String(r.color).replace(/\s/g, '').toLowerCase().includes('59,130,246'))));
+                        if (breaks.length > 0) targetBreak = breaks[breaks.length - 1];
+                    } else { // Tab (Vor)
+                        targetBreak = regions.find(r => parseFloat(r.start) > time + 0.2 && (r.data?.isLineBreak || r.customLineBreak || (String(r.color).replace(/\s/g, '').toLowerCase().includes('59,130,246'))));
+                    }
+                    
+                    if (targetBreak) {
+                        window.ws.setTime(targetBreak.start);
+                        window.activeRegion = targetBreak; 
+                        if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+                    }
+                }
                 
                 if (e.ctrlKey || e.metaKey) {
                     if (e.key.toLowerCase() === 'z') {
@@ -503,15 +547,25 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                 if ((e.key === 'Backspace' || e.key === 'Delete') && window.activeRegion) {
                     window.activeRegion.remove();
                     window.activeRegion = null;
+                    if (window.updatePreviewMonitor) window.updatePreviewMonitor();
                 }
                 
                 if (e.key === 'Enter' && window.activeRegion) {
                     e.preventDefault();
-                    const currentColor = window.activeRegion.color;
-                    const isBlue = (currentColor === 'rgba(59, 130, 246, 0.5)' || currentColor === 'rgb(59, 130, 246, 0.5)');
-                    const newColor = isBlue ? 'rgba(16, 185, 129, 0.3)' : 'rgba(59, 130, 246, 0.5)';
-                    window.activeRegion.setOptions({ color: newColor });
+                    let colorStr = String(window.activeRegion.color || "").replace(/\s/g, '').toLowerCase();
+                    let isBlue = colorStr.includes('59,130,246') || colorStr.includes('#3b82f6');
+                    
+                    let isBreak = window.activeRegion.data?.isLineBreak || window.activeRegion.customLineBreak || isBlue || false;
+                    let newBreakStatus = !isBreak;
+                    
+                    window.activeRegion.data = { isLineBreak: newBreakStatus };
+                    window.activeRegion.customLineBreak = newBreakStatus;
+                    window.activeRegion.setOptions({ 
+                        color: newBreakStatus ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)',
+                        data: { isLineBreak: newBreakStatus }
+                    });
                     window.saveState();
+                    if (window.updatePreviewMonitor) window.updatePreviewMonitor();
                 }
             };
             document.addEventListener('keydown', window.ws_keydown_listener);
@@ -550,8 +604,168 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     });
                 });
             }
+            if (window.applyAutoChunking) window.applyAutoChunking();
             setTimeout(window.saveState, 500);
         });
+        
+        window.applyAutoChunking = function() {
+            if (!window.ws || !window.ws.plugins[0]) return;
+            const regions = window.ws.plugins[0].getRegions().sort((a,b) => parseFloat(a.start) - parseFloat(b.start));
+            let charCount = 0;
+            
+            regions.forEach((r, i) => {
+                let isBreak = false;
+                let text = typeof r.content === 'string' ? r.content : (r.element ? r.element.innerText || r.element.textContent : "");
+                let textLen = text.length;
+                
+                if (i === 0) {
+                    isBreak = true;
+                    charCount = textLen;
+                } else {
+                    let prev = regions[i-1];
+                    let gap = parseFloat(r.start) - parseFloat(prev.end);
+                    if (gap > 0.8 || (charCount + textLen) > 35) {
+                        isBreak = true;
+                        charCount = textLen;
+                    } else {
+                        charCount += (textLen + 1);
+                    }
+                }
+                
+                r.data = { isLineBreak: isBreak };
+                r.customLineBreak = isBreak;
+                r.setOptions({ color: isBreak ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)', data: { isLineBreak: isBreak } });
+            });
+            
+            window.saveState();
+            if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+        };
+        // ==========================================
+        // Live Preview Monitor Sync Engine
+        // ==========================================
+        window.onPreviewWordClick = function(regionId) {
+            if (!window.regionsPlugin) return;
+            const regions = window.regionsPlugin.getRegions();
+            const r = regions.find(x => x.id === regionId);
+            if (r) {
+                window.activeRegion = r;
+                window.ws.setTime(r.start);
+                if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+            }
+        };
+
+        window.onPreviewWordDblClick = function(regionId) {
+            if (!window.regionsPlugin) return;
+            const regions = window.regionsPlugin.getRegions();
+            const r = regions.find(x => x.id === regionId);
+            if (r) {
+                let currentText = typeof r.content === 'string' ? r.content : (r.element ? r.element.innerText || r.element.textContent : "");
+                const newText = prompt("Wort korrigieren:", currentText);
+                if (newText !== null && newText.trim() !== "") {
+                    r.setOptions({ content: newText.trim() });
+                    window.saveState();
+                    if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+                }
+            }
+        };
+
+        window.updatePreviewMonitor = function() {
+            if (!window.ws || !window.regionsPlugin) return;
+            const time = window.ws.getCurrentTime();
+            const monitor = document.getElementById('preview-text-container');
+            if (!monitor) return;
+
+            const regions = window.regionsPlugin.getRegions().sort((a, b) => parseFloat(a.start) - parseFloat(b.start));
+            
+            let lines = [];
+            let currentLine = [];
+            
+            // 1. BULLETPROOF CHUNKING (Farberkennung)
+            regions.forEach(r => {
+                const colorStr = String(r.color || "").replace(/\s/g, '').toLowerCase();
+                const isBlue = colorStr.includes('59,130,246') || colorStr.includes('#3b82f6');
+                
+                if (isBlue || currentLine.length === 0) {
+                    if (currentLine.length > 0) lines.push(currentLine);
+                    currentLine = [r];
+                } else {
+                    currentLine.push(r);
+                }
+            });
+            if (currentLine.length > 0) lines.push(currentLine);
+
+            // 2. EXAKTE ZEITFENSTER BERECHNEN (Keine Überlappungen!)
+            let activeLine = null;
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i];
+                if (line.length === 0) continue;
+                let lineStart = parseFloat(line[0].start);
+                
+                // Die Anzeigedauer einer Zeile endet EXAKT, wenn die nächste beginnt.
+                let lineEnd = (i < lines.length - 1) ? parseFloat(lines[i+1][0].start) : parseFloat(line[line.length - 1].end) + 0.5;
+                
+                if (time >= lineStart && time < lineEnd) {
+                    activeLine = line;
+                    break;
+                }
+            }
+
+            // 3. RENDER HTML
+            if (activeLine) {
+                let html = "";
+                activeLine.forEach(r => {
+                    let text = typeof r.content === 'string' ? r.content : (r.element ? r.element.innerText || r.element.textContent : "");
+                    let start = parseFloat(r.start);
+                    let end = parseFloat(r.end);
+                    
+                    let cssClass = "preview-word";
+                    
+                    if (time >= start && time <= end) {
+                        if (time <= start + 0.15) {
+                            cssClass += " word-active-popup";
+                        } else {
+                            cssClass += " word-active-karaoke";
+                        }
+                    } else if (time > end) {
+                        cssClass += " word-active-karaoke";
+                    }
+                    
+                    let isSelected = (window.activeRegion && window.activeRegion.id === r.id);
+                    if (isSelected) cssClass += " word-selected";
+                    
+                    html += `<span class="${cssClass}" 
+                                style="cursor:pointer;" 
+                                onclick="window.onPreviewWordClick('${r.id}')" 
+                                ondblclick="window.onPreviewWordDblClick('${r.id}')">
+                                ${text}
+                             </span>`;
+                });
+                
+                if (monitor.innerHTML !== html) monitor.innerHTML = html;
+            } else {
+                if (monitor.innerHTML !== "") monitor.innerHTML = "";
+            }
+        };
+
+        // 60 FPS requestAnimationFrame Loop für absolut flüssige Sync während der Wiedergabe
+        if (window.previewRafId) cancelAnimationFrame(window.previewRafId);
+        const loopPreview = () => {
+            if (window.ws && window.ws.isPlaying()) {
+                window.updatePreviewMonitor();
+            }
+            window.previewRafId = requestAnimationFrame(loopPreview);
+        };
+        loopPreview();
+
+        // Fallback für Klicks und Drags im pausierten Zustand
+        ['seek', 'seeking', 'timeupdate'].forEach(evt => {
+            window.ws.on(evt, window.updatePreviewMonitor);
+        });
+        window.regionsPlugin.on('region-update-end', window.updatePreviewMonitor);
+        
+        // Initiales Update beim Laden
+        setTimeout(window.updatePreviewMonitor, 100);
+
         return [];
     }
     """
@@ -659,11 +873,34 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
         regionsPlugin.on('region-clicked', (region, e) => {
             e.stopPropagation();
             window.activeRegion = region;
+            if (window.updatePreviewMonitor) window.updatePreviewMonitor();
         });
 
         if (!window.ws_keydown_listener) {
             window.ws_keydown_listener = (e) => {
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                
+                // TAB: Springe zum nächsten/vorherigen blauen Block
+                if (e.key === 'Tab') {
+                    e.preventDefault();
+                    if (!window.ws || !window.ws.plugins[0]) return;
+                    const time = window.ws.getCurrentTime();
+                    const regions = window.ws.plugins[0].getRegions().sort((a,b) => parseFloat(a.start) - parseFloat(b.start));
+                    
+                    let targetBreak = null;
+                    if (e.shiftKey) { // Shift+Tab (Zurück)
+                        let breaks = regions.filter(r => parseFloat(r.start) < time - 0.2 && (r.data?.isLineBreak || r.customLineBreak || (String(r.color).replace(/\s/g, '').toLowerCase().includes('59,130,246'))));
+                        if (breaks.length > 0) targetBreak = breaks[breaks.length - 1];
+                    } else { // Tab (Vor)
+                        targetBreak = regions.find(r => parseFloat(r.start) > time + 0.2 && (r.data?.isLineBreak || r.customLineBreak || (String(r.color).replace(/\s/g, '').toLowerCase().includes('59,130,246'))));
+                    }
+                    
+                    if (targetBreak) {
+                        window.ws.setTime(targetBreak.start);
+                        window.activeRegion = targetBreak; 
+                        if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+                    }
+                }
                 
                 if (e.ctrlKey || e.metaKey) {
                     if (e.key.toLowerCase() === 'z') {
@@ -682,15 +919,25 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                 if ((e.key === 'Backspace' || e.key === 'Delete') && window.activeRegion) {
                     window.activeRegion.remove();
                     window.activeRegion = null;
+                    if (window.updatePreviewMonitor) window.updatePreviewMonitor();
                 }
                 
                 if (e.key === 'Enter' && window.activeRegion) {
                     e.preventDefault();
-                    const currentColor = window.activeRegion.color;
-                    const isBlue = (currentColor === 'rgba(59, 130, 246, 0.5)' || currentColor === 'rgb(59, 130, 246, 0.5)');
-                    const newColor = isBlue ? 'rgba(16, 185, 129, 0.3)' : 'rgba(59, 130, 246, 0.5)';
-                    window.activeRegion.setOptions({ color: newColor });
+                    let colorStr = String(window.activeRegion.color || "").replace(/\s/g, '').toLowerCase();
+                    let isBlue = colorStr.includes('59,130,246') || colorStr.includes('#3b82f6');
+                    
+                    let isBreak = window.activeRegion.data?.isLineBreak || window.activeRegion.customLineBreak || isBlue || false;
+                    let newBreakStatus = !isBreak;
+                    
+                    window.activeRegion.data = { isLineBreak: newBreakStatus };
+                    window.activeRegion.customLineBreak = newBreakStatus;
+                    window.activeRegion.setOptions({ 
+                        color: newBreakStatus ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)',
+                        data: { isLineBreak: newBreakStatus }
+                    });
                     window.saveState();
+                    if (window.updatePreviewMonitor) window.updatePreviewMonitor();
                 }
             };
             document.addEventListener('keydown', window.ws_keydown_listener);
@@ -708,6 +955,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
             if (newText !== null && newText.trim() !== "") {
                 region.setOptions({ content: newText.trim() });
                 window.saveState();
+                if (window.updatePreviewMonitor) window.updatePreviewMonitor();
             }
         });
         
@@ -729,8 +977,168 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     });
                 });
             }
+            if (window.applyAutoChunking) window.applyAutoChunking();
             setTimeout(window.saveState, 500);
         });
+
+        window.applyAutoChunking = function() {
+            if (!window.ws || !window.ws.plugins[0]) return;
+            const regions = window.ws.plugins[0].getRegions().sort((a,b) => parseFloat(a.start) - parseFloat(b.start));
+            let charCount = 0;
+            
+            regions.forEach((r, i) => {
+                let isBreak = false;
+                let text = typeof r.content === 'string' ? r.content : (r.element ? r.element.innerText || r.element.textContent : "");
+                let textLen = text.length;
+                
+                if (i === 0) {
+                    isBreak = true;
+                    charCount = textLen;
+                } else {
+                    let prev = regions[i-1];
+                    let gap = parseFloat(r.start) - parseFloat(prev.end);
+                    if (gap > 0.8 || (charCount + textLen) > 35) {
+                        isBreak = true;
+                        charCount = textLen;
+                    } else {
+                        charCount += (textLen + 1);
+                    }
+                }
+                
+                r.data = { isLineBreak: isBreak };
+                r.customLineBreak = isBreak;
+                r.setOptions({ color: isBreak ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)', data: { isLineBreak: isBreak } });
+            });
+            
+            window.saveState();
+            if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+        };
+        // ==========================================
+        // Live Preview Monitor Sync Engine
+        // ==========================================
+        window.onPreviewWordClick = function(regionId) {
+            if (!window.regionsPlugin) return;
+            const regions = window.regionsPlugin.getRegions();
+            const r = regions.find(x => x.id === regionId);
+            if (r) {
+                window.activeRegion = r;
+                window.ws.setTime(r.start);
+                if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+            }
+        };
+
+        window.onPreviewWordDblClick = function(regionId) {
+            if (!window.regionsPlugin) return;
+            const regions = window.regionsPlugin.getRegions();
+            const r = regions.find(x => x.id === regionId);
+            if (r) {
+                let currentText = typeof r.content === 'string' ? r.content : (r.element ? r.element.innerText || r.element.textContent : "");
+                const newText = prompt("Wort korrigieren:", currentText);
+                if (newText !== null && newText.trim() !== "") {
+                    r.setOptions({ content: newText.trim() });
+                    window.saveState();
+                    if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+                }
+            }
+        };
+
+        window.updatePreviewMonitor = function() {
+            if (!window.ws || !window.regionsPlugin) return;
+            const time = window.ws.getCurrentTime();
+            const monitor = document.getElementById('preview-text-container');
+            if (!monitor) return;
+
+            const regions = window.regionsPlugin.getRegions().sort((a, b) => parseFloat(a.start) - parseFloat(b.start));
+            
+            let lines = [];
+            let currentLine = [];
+            
+            // 1. BULLETPROOF CHUNKING (Farberkennung)
+            regions.forEach(r => {
+                const colorStr = String(r.color || "").replace(/\s/g, '').toLowerCase();
+                const isBlue = colorStr.includes('59,130,246') || colorStr.includes('#3b82f6');
+                
+                if (isBlue || currentLine.length === 0) {
+                    if (currentLine.length > 0) lines.push(currentLine);
+                    currentLine = [r];
+                } else {
+                    currentLine.push(r);
+                }
+            });
+            if (currentLine.length > 0) lines.push(currentLine);
+
+            // 2. EXAKTE ZEITFENSTER BERECHNEN (Keine Überlappungen!)
+            let activeLine = null;
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i];
+                if (line.length === 0) continue;
+                let lineStart = parseFloat(line[0].start);
+                
+                // Die Anzeigedauer einer Zeile endet EXAKT, wenn die nächste beginnt.
+                let lineEnd = (i < lines.length - 1) ? parseFloat(lines[i+1][0].start) : parseFloat(line[line.length - 1].end) + 0.5;
+                
+                if (time >= lineStart && time < lineEnd) {
+                    activeLine = line;
+                    break;
+                }
+            }
+
+            // 3. RENDER HTML
+            if (activeLine) {
+                let html = "";
+                activeLine.forEach(r => {
+                    let text = typeof r.content === 'string' ? r.content : (r.element ? r.element.innerText || r.element.textContent : "");
+                    let start = parseFloat(r.start);
+                    let end = parseFloat(r.end);
+                    
+                    let cssClass = "preview-word";
+                    
+                    if (time >= start && time <= end) {
+                        if (time <= start + 0.15) {
+                            cssClass += " word-active-popup";
+                        } else {
+                            cssClass += " word-active-karaoke";
+                        }
+                    } else if (time > end) {
+                        cssClass += " word-active-karaoke";
+                    }
+                    
+                    let isSelected = (window.activeRegion && window.activeRegion.id === r.id);
+                    if (isSelected) cssClass += " word-selected";
+                    
+                    html += `<span class="${cssClass}" 
+                                style="cursor:pointer;" 
+                                onclick="window.onPreviewWordClick('${r.id}')" 
+                                ondblclick="window.onPreviewWordDblClick('${r.id}')">
+                                ${text}
+                             </span>`;
+                });
+                
+                if (monitor.innerHTML !== html) monitor.innerHTML = html;
+            } else {
+                if (monitor.innerHTML !== "") monitor.innerHTML = "";
+            }
+        };
+
+        // 60 FPS requestAnimationFrame Loop für absolut flüssige Sync während der Wiedergabe
+        if (window.previewRafId_import) cancelAnimationFrame(window.previewRafId_import);
+        const loopPreview = () => {
+            if (window.ws && window.ws.isPlaying()) {
+                window.updatePreviewMonitor();
+            }
+            window.previewRafId_import = requestAnimationFrame(loopPreview);
+        };
+        loopPreview();
+
+        // Binde alle erdenklichen Time-Events für maximale Kompatibilität und Responsiveness
+        ['audioprocess', 'timeupdate', 'seek', 'seeking'].forEach(evt => {
+            window.ws.on(evt, window.updatePreviewMonitor);
+        });
+        window.regionsPlugin.on('region-update-end', window.updatePreviewMonitor);
+        
+        // Initiales Update beim Laden
+        setTimeout(window.updatePreviewMonitor, 100);
+
         return [];
     }
     """
@@ -949,6 +1357,12 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
         fn=None, 
         inputs=[slider_speed], 
         js="(speed) => { if (window.ws) { window.ws.setPlaybackRate(speed); } }"
+    )
+
+    btn_auto_chunking.click(
+        fn=None,
+        inputs=None,
+        js="(x) => { if (window.applyAutoChunking) window.applyAutoChunking(); return x; }"
     )
 
     btn_new_project.click(
