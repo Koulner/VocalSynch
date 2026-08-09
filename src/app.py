@@ -137,8 +137,9 @@ def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in
             word = str(r.get("word", ""))
             start = float(r.get("start", 0))
             end = float(r.get("end", 0))
-            is_break = bool(r.get("line_break", False))
-            timestamps.append(WordTimestamp(word=word, start=start, end=end, speaker=None, line_break=is_break))
+            is_line = bool(r.get("line_break", False))
+            is_block = bool(r.get("block_break", False))
+            timestamps.append(WordTimestamp(word=word, start=start, end=end, speaker=None, line_break=is_line, block_break=is_block))
             
         config.video.style.secondary_colour = hex_to_ass_color(color_ungesungen)
         config.video.style.primary_colour = hex_to_ass_color(color_gesungen)
@@ -370,7 +371,16 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     track_selector = gr.Radio(choices=["Vocals", "Instrumental", "Original"], value="Vocals", label="Audiospur wechseln")
                     gr.HTML('<div id="preview-monitor"><div id="preview-text-container"></div></div>')
                     gr.HTML('<div id="waveform-container" style="width: 100%; border: 1px solid #ccc; background: #1f2937; border-radius: 8px;"></div><div id="timeline-container"></div>')
-                    gr.Markdown("*💡 Editor-Controls: Doppelklick zum Ändern | Ziehen für neues Wort | [Entf] zum Löschen | [Enter] Zeilenumbruch umschalten (Blau = Start einer neuen Zeile) | [Strg+Z] Rückgängig*")
+                    with gr.Accordion("ℹ️ Editor Shortcuts & Hilfe", open=False):
+                        gr.Markdown("""
+                        * **Doppelklick:** Wort bearbeiten
+                        * **[Entf] / [Backspace]:** Wort löschen
+                        * **[Tab] / [Shift+Tab]:** Zum nächsten/vorherigen Textblock springen
+                        * **[Pfeil Links] / [Pfeil Rechts]:** 0.2s vor/zurück spulen
+                        * **[Enter]:** Neuen Textblock beginnen (Wort wird Blau)
+                        * **[Shift] + [Enter]:** Zeilenumbruch im selben Block einfügen (Wort wird Orange)
+                        * **[Strg] + [Z] / [Y]:** Rückgängig / Wiederholen
+                        """)
                     
                     with gr.Row():
                         btn_play = gr.Button("▶ Play/Pause")
@@ -530,6 +540,18 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     }
                 }
                 
+                // PFEILTASTEN: Spulen
+                if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    if(window.ws) { window.ws.setTime(Math.min(window.ws.getDuration(), window.ws.getCurrentTime() + 0.2)); }
+                    if(window.updatePreviewMonitor) window.updatePreviewMonitor();
+                }
+                if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    if(window.ws) { window.ws.setTime(Math.max(0, window.ws.getCurrentTime() - 0.2)); }
+                    if(window.updatePreviewMonitor) window.updatePreviewMonitor();
+                }
+                
                 if (e.ctrlKey || e.metaKey) {
                     if (e.key.toLowerCase() === 'z') {
                         e.preventDefault();
@@ -550,21 +572,28 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     if (window.updatePreviewMonitor) window.updatePreviewMonitor();
                 }
                 
-                if (e.key === 'Enter' && window.activeRegion) {
+                // SHIFT + ENTER: Zeilenumbruch (Orange)
+                if (e.key === 'Enter' && e.shiftKey && window.activeRegion) {
                     e.preventDefault();
-                    let colorStr = String(window.activeRegion.color || "").replace(/\s/g, '').toLowerCase();
-                    let isBlue = colorStr.includes('59,130,246') || colorStr.includes('#3b82f6');
-                    
-                    let isBreak = window.activeRegion.data?.isLineBreak || window.activeRegion.customLineBreak || isBlue || false;
-                    let newBreakStatus = !isBreak;
-                    
-                    window.activeRegion.data = { isLineBreak: newBreakStatus };
-                    window.activeRegion.customLineBreak = newBreakStatus;
+                    let isLine = !(window.activeRegion.data?.isLineBreak || false);
+                    window.activeRegion.data = { isBlockBreak: false, isLineBreak: isLine };
                     window.activeRegion.setOptions({ 
-                        color: newBreakStatus ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)',
-                        data: { isLineBreak: newBreakStatus }
+                        color: isLine ? 'rgba(245, 158, 11, 0.5)' : 'rgba(16, 185, 129, 0.4)', 
+                        data: window.activeRegion.data 
                     });
-                    window.saveState();
+                    window.saveState(); 
+                    if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+                }
+                // NUR ENTER: Neuer Block (Blau)
+                else if (e.key === 'Enter' && !e.shiftKey && window.activeRegion) {
+                    e.preventDefault();
+                    let isBlock = !(window.activeRegion.data?.isBlockBreak || false);
+                    window.activeRegion.data = { isBlockBreak: isBlock, isLineBreak: false };
+                    window.activeRegion.setOptions({ 
+                        color: isBlock ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.4)', 
+                        data: window.activeRegion.data 
+                    });
+                    window.saveState(); 
                     if (window.updatePreviewMonitor) window.updatePreviewMonitor();
                 }
             };
@@ -591,21 +620,42 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
 
         window.ws.once('decode', () => {
             if (words && words.length > 0) {
-                words.forEach((w, idx) => {
-                    const wordText = String(w.word || w.text || "");
-                    const isLineBreak = w.line_break !== undefined ? w.line_break : (idx === 0);
+                words.forEach((item, idx) => {
+                    let isBlock = item.block_break || false;
+                    let isLine = item.line_break || false;
+                    
+                    // LEGACY SUPPORT: Alte Projekte hatten nur 'line_break' als blauen Block-Umbruch.
+                    if (item.line_break === true && item.block_break === undefined) {
+                        isBlock = true;
+                        isLine = false;
+                    }
+                    if (idx === 0) isBlock = true;
+
+                    let rColor = 'rgba(16, 185, 129, 0.4)'; // Gruen
+                    if (isBlock) rColor = 'rgba(59, 130, 246, 0.5)'; // Blau
+                    else if (isLine) rColor = 'rgba(245, 158, 11, 0.5)'; // Orange
+
                     regionsPlugin.addRegion({
-                        start: w.start,
-                        end: w.end,
-                        content: wordText,
-                        color: isLineBreak ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)',
+                        start: item.start,
+                        end: item.end,
+                        content: String(item.word || item.text || ""),
+                        color: rColor,
+                        data: { isBlockBreak: isBlock, isLineBreak: isLine },
                         drag: true,
                         resize: true
                     });
                 });
+                
+                const hasSavedBreaks = words.filter((item, index) => index > 0 && (item.block_break || item.line_break || (item.line_break && item.block_break === undefined))).length > 0;
+                if (!hasSavedBreaks && window.applyAutoChunking) {
+                    setTimeout(() => window.applyAutoChunking(), 500);
+                } else {
+                    setTimeout(() => {
+                        window.saveState();
+                        if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+                    }, 500);
+                }
             }
-            if (window.applyAutoChunking) window.applyAutoChunking();
-            setTimeout(window.saveState, 500);
         });
         
         window.applyAutoChunking = function() {
@@ -632,9 +682,8 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     }
                 }
                 
-                r.data = { isLineBreak: isBreak };
-                r.customLineBreak = isBreak;
-                r.setOptions({ color: isBreak ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)', data: { isLineBreak: isBreak } });
+                r.data = { isBlockBreak: isBreak, isLineBreak: false };
+                r.setOptions({ color: isBreak ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.4)', data: r.data });
             });
             
             window.saveState();
@@ -684,8 +733,9 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
             regions.forEach(r => {
                 const colorStr = String(r.color || "").replace(/\s/g, '').toLowerCase();
                 const isBlue = colorStr.includes('59,130,246') || colorStr.includes('#3b82f6');
+                const isBlock = r.data?.isBlockBreak || isBlue;
                 
-                if (isBlue || currentLine.length === 0) {
+                if (isBlock || currentLine.length === 0) {
                     if (currentLine.length > 0) lines.push(currentLine);
                     currentLine = [r];
                 } else {
@@ -713,10 +763,13 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
             // 3. RENDER HTML
             if (activeLine) {
                 let html = "";
-                activeLine.forEach(r => {
+                activeLine.forEach((r, idx) => {
                     let text = typeof r.content === 'string' ? r.content : (r.element ? r.element.innerText || r.element.textContent : "");
                     let start = parseFloat(r.start);
                     let end = parseFloat(r.end);
+                    
+                    let isLineBreak = r.data?.isLineBreak || (String(r.color || "").replace(/\s/g, '').toLowerCase().includes('245,158,11'));
+                    if (isLineBreak) html += `<br>`;
                     
                     let cssClass = "preview-word";
                     
@@ -902,6 +955,18 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     }
                 }
                 
+                // PFEILTASTEN: Spulen
+                if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    if(window.ws) { window.ws.setTime(Math.min(window.ws.getDuration(), window.ws.getCurrentTime() + 0.2)); }
+                    if(window.updatePreviewMonitor) window.updatePreviewMonitor();
+                }
+                if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    if(window.ws) { window.ws.setTime(Math.max(0, window.ws.getCurrentTime() - 0.2)); }
+                    if(window.updatePreviewMonitor) window.updatePreviewMonitor();
+                }
+                
                 if (e.ctrlKey || e.metaKey) {
                     if (e.key.toLowerCase() === 'z') {
                         e.preventDefault();
@@ -922,21 +987,28 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     if (window.updatePreviewMonitor) window.updatePreviewMonitor();
                 }
                 
-                if (e.key === 'Enter' && window.activeRegion) {
+                // SHIFT + ENTER: Zeilenumbruch (Orange)
+                if (e.key === 'Enter' && e.shiftKey && window.activeRegion) {
                     e.preventDefault();
-                    let colorStr = String(window.activeRegion.color || "").replace(/\s/g, '').toLowerCase();
-                    let isBlue = colorStr.includes('59,130,246') || colorStr.includes('#3b82f6');
-                    
-                    let isBreak = window.activeRegion.data?.isLineBreak || window.activeRegion.customLineBreak || isBlue || false;
-                    let newBreakStatus = !isBreak;
-                    
-                    window.activeRegion.data = { isLineBreak: newBreakStatus };
-                    window.activeRegion.customLineBreak = newBreakStatus;
+                    let isLine = !(window.activeRegion.data?.isLineBreak || false);
+                    window.activeRegion.data = { isBlockBreak: false, isLineBreak: isLine };
                     window.activeRegion.setOptions({ 
-                        color: newBreakStatus ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)',
-                        data: { isLineBreak: newBreakStatus }
+                        color: isLine ? 'rgba(245, 158, 11, 0.5)' : 'rgba(16, 185, 129, 0.4)', 
+                        data: window.activeRegion.data 
                     });
-                    window.saveState();
+                    window.saveState(); 
+                    if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+                }
+                // NUR ENTER: Neuer Block (Blau)
+                else if (e.key === 'Enter' && !e.shiftKey && window.activeRegion) {
+                    e.preventDefault();
+                    let isBlock = !(window.activeRegion.data?.isBlockBreak || false);
+                    window.activeRegion.data = { isBlockBreak: isBlock, isLineBreak: false };
+                    window.activeRegion.setOptions({ 
+                        color: isBlock ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.4)', 
+                        data: window.activeRegion.data 
+                    });
+                    window.saveState(); 
                     if (window.updatePreviewMonitor) window.updatePreviewMonitor();
                 }
             };
@@ -964,21 +1036,42 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
 
         window.ws.once('decode', () => {
             if (words && words.length > 0) {
-                words.forEach((w, idx) => {
-                    const wordText = String(w.word || w.text || "");
-                    const isLineBreak = w.line_break !== undefined ? w.line_break : (idx === 0);
+                words.forEach((item, idx) => {
+                    let isBlock = item.block_break || false;
+                    let isLine = item.line_break || false;
+                    
+                    // LEGACY SUPPORT: Alte Projekte hatten nur 'line_break' als blauen Block-Umbruch.
+                    if (item.line_break === true && item.block_break === undefined) {
+                        isBlock = true;
+                        isLine = false;
+                    }
+                    if (idx === 0) isBlock = true;
+
+                    let rColor = 'rgba(16, 185, 129, 0.4)'; // Gruen
+                    if (isBlock) rColor = 'rgba(59, 130, 246, 0.5)'; // Blau
+                    else if (isLine) rColor = 'rgba(245, 158, 11, 0.5)'; // Orange
+
                     regionsPlugin.addRegion({
-                        start: w.start,
-                        end: w.end,
-                        content: wordText,
-                        color: isLineBreak ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)',
+                        start: item.start,
+                        end: item.end,
+                        content: String(item.word || item.text || ""),
+                        color: rColor,
+                        data: { isBlockBreak: isBlock, isLineBreak: isLine },
                         drag: true,
                         resize: true
                     });
                 });
+                
+                const hasSavedBreaks = words.filter((item, index) => index > 0 && (item.block_break || item.line_break || (item.line_break && item.block_break === undefined))).length > 0;
+                if (!hasSavedBreaks && window.applyAutoChunking) {
+                    setTimeout(() => window.applyAutoChunking(), 500);
+                } else {
+                    setTimeout(() => {
+                        window.saveState();
+                        if (window.updatePreviewMonitor) window.updatePreviewMonitor();
+                    }, 500);
+                }
             }
-            if (window.applyAutoChunking) window.applyAutoChunking();
-            setTimeout(window.saveState, 500);
         });
 
         window.applyAutoChunking = function() {
@@ -1005,9 +1098,8 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     }
                 }
                 
-                r.data = { isLineBreak: isBreak };
-                r.customLineBreak = isBreak;
-                r.setOptions({ color: isBreak ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)', data: { isLineBreak: isBreak } });
+                r.data = { isBlockBreak: isBreak, isLineBreak: false };
+                r.setOptions({ color: isBreak ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.4)', data: r.data });
             });
             
             window.saveState();
@@ -1057,8 +1149,9 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
             regions.forEach(r => {
                 const colorStr = String(r.color || "").replace(/\s/g, '').toLowerCase();
                 const isBlue = colorStr.includes('59,130,246') || colorStr.includes('#3b82f6');
+                const isBlock = r.data?.isBlockBreak || isBlue;
                 
-                if (isBlue || currentLine.length === 0) {
+                if (isBlock || currentLine.length === 0) {
                     if (currentLine.length > 0) lines.push(currentLine);
                     currentLine = [r];
                 } else {
@@ -1086,10 +1179,13 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
             // 3. RENDER HTML
             if (activeLine) {
                 let html = "";
-                activeLine.forEach(r => {
+                activeLine.forEach((r, idx) => {
                     let text = typeof r.content === 'string' ? r.content : (r.element ? r.element.innerText || r.element.textContent : "");
                     let start = parseFloat(r.start);
                     let end = parseFloat(r.end);
+                    
+                    let isLineBreak = r.data?.isLineBreak || (String(r.color || "").replace(/\s/g, '').toLowerCase().includes('245,158,11'));
+                    if (isLineBreak) html += `<br>`;
                     
                     let cssClass = "preview-word";
                     
@@ -1180,7 +1276,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     } else if (r.element) {
                         textContent = r.element.innerText || r.element.textContent;
                     }
-                    return {start: r.start, end: r.end, text: textContent, color: r.color};
+                    return {start: r.start, end: r.end, text: textContent, color: r.color, data: r.data};
                 });
                 
                 window.ws.once('decode', () => {
@@ -1192,6 +1288,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                             end: r.end,
                             content: wordText,
                             color: r.color,
+                            data: r.data,
                             drag: true,
                             resize: true
                         });
@@ -1230,8 +1327,9 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     } else if (r.element) {
                         textContent = r.element.innerText || r.element.textContent;
                     }
-                    const isLineBreak = (r.color === 'rgba(59, 130, 246, 0.5)' || r.color === 'rgb(59, 130, 246, 0.5)');
-                    return {word: textContent, start: r.start, end: r.end, line_break: isLineBreak};
+                    const isBlock = r.data?.isBlockBreak || (r.color === 'rgba(59, 130, 246, 0.5)' || r.color === 'rgb(59, 130, 246, 0.5)');
+                    const isLine = r.data?.isLineBreak || (r.color === 'rgba(245, 158, 11, 0.5)' || r.color === 'rgb(245, 158, 11, 0.5)');
+                    return {word: textContent, start: r.start, end: r.end, block_break: isBlock, line_break: isLine};
                 });
             }
             return [JSON.stringify(data), inst, bg, aud, keep, orig, sec, prim, fsize, lead, marg, cues, down, proj, anim];
@@ -1298,8 +1396,9 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     } else if (r.element) {
                         textContent = r.element.innerText || r.element.textContent;
                     }
-                    const isLineBreak = (r.color === 'rgba(59, 130, 246, 0.5)' || r.color === 'rgb(59, 130, 246, 0.5)');
-                    return {word: textContent, start: r.start, end: r.end, line_break: isLineBreak};
+                    const isBlock = r.data?.isBlockBreak || (r.color === 'rgba(59, 130, 246, 0.5)' || r.color === 'rgb(59, 130, 246, 0.5)');
+                    const isLine = r.data?.isLineBreak || (r.color === 'rgba(245, 158, 11, 0.5)' || r.color === 'rgb(245, 158, 11, 0.5)');
+                    return {word: textContent, start: r.start, end: r.end, block_break: isBlock, line_break: isLine};
                 });
             }
             return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim];
@@ -1324,8 +1423,9 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     } else if (r.element) {
                         textContent = r.element.innerText || r.element.textContent;
                     }
-                    const isLineBreak = (r.color === 'rgba(59, 130, 246, 0.5)' || r.color === 'rgb(59, 130, 246, 0.5)');
-                    return {word: textContent, start: r.start, end: r.end, line_break: isLineBreak};
+                    const isBlock = r.data?.isBlockBreak || (r.color === 'rgba(59, 130, 246, 0.5)' || r.color === 'rgb(59, 130, 246, 0.5)');
+                    const isLine = r.data?.isLineBreak || (r.color === 'rgba(245, 158, 11, 0.5)' || r.color === 'rgb(245, 158, 11, 0.5)');
+                    return {word: textContent, start: r.start, end: r.end, block_break: isBlock, line_break: isLine};
                 });
             }
             return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim];

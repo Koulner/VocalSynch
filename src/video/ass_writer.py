@@ -31,13 +31,13 @@ def generate_karaoke_ass(timestamps: list[WordTimestamp], output_path: Path, con
     lines = []
     current_line_words = []
     
-    # Wort-Gruppierung (User-gesteuert via line_break)
+    # Wort-Gruppierung (User-gesteuert via block_break)
     for wt in timestamps:
         if not current_line_words:
             current_line_words.append(wt)
             continue
             
-        if wt.line_break or (wt.speaker != current_line_words[-1].speaker):
+        if wt.block_break or (wt.speaker != current_line_words[-1].speaker):
             lines.append(current_line_words)
             current_line_words = [wt]
         else:
@@ -147,6 +147,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 else:
                     # Fallback zu Karaoke Fill
                     ass_text += f"{{\\kf{duration_cs}}}{wt.word}{space}"
+                
+                if wt.line_break:
+                    ass_text += "\\N"
                     
                 prev_end = wt.end
                 

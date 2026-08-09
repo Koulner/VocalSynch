@@ -11,3 +11,4 @@ class WordTimestamp(BaseModel):
     speaker: Optional[str] = None
     append_space: bool = True
     line_break: bool = False
+    block_break: bool = False
