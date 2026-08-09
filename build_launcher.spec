@@ -3,13 +3,13 @@ import sys
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
-hidden_imports = collect_submodules('gradio') + collect_submodules('deep_translator') + ['uvicorn', 'fastapi']
+hidden_imports = collect_submodules('gradio') + collect_submodules('gradio_client') + collect_submodules('deep_translator') + ['uvicorn', 'fastapi']
 
 a = Analysis(
     ['src/launcher.py'],
     pathex=[],
     binaries=[],
-    datas=collect_data_files('gradio'),
+    datas=collect_data_files('gradio') + collect_data_files('gradio_client'),
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},

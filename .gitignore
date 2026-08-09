@@ -27,3 +27,7 @@ ergebnis/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+#installer
+build/
+dist/
