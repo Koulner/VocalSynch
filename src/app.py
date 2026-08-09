@@ -63,7 +63,36 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
         if not instrumental_path or not timestamps:
             raise gr.Error("Ein Fehler ist bei der Extraktion aufgetreten.")
             
-        words_list = [{"word": wt.word, "start": wt.start, "end": wt.end, "speaker": wt.speaker or ""} for wt in timestamps]
+        words_list = []
+        current_char_count = 0
+        for i, wt in enumerate(timestamps):
+            word_text = str(wt.word).strip()
+            is_break = False
+            
+            if i == 0:
+                is_break = True
+            else:
+                prev_wt = timestamps[i-1]
+                gap = wt.start - prev_wt.end
+                if gap > 0.8:
+                    is_break = True
+                elif any(punct in str(prev_wt.word) for punct in ['.', '?', '!']):
+                    is_break = True
+                elif current_char_count > 30:
+                    is_break = True
+                    
+            if is_break:
+                current_char_count = len(word_text)
+            else:
+                current_char_count += len(word_text) + 1
+                
+            words_list.append({
+                "word": wt.word,
+                "start": wt.start,
+                "end": wt.end,
+                "speaker": wt.speaker or "",
+                "line_break": is_break
+            })
         media_paths = {
             "Vocals": str(vocals_path),
             "Instrumental": str(instrumental_path),
@@ -108,7 +137,8 @@ def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in
             word = str(r.get("word", ""))
             start = float(r.get("start", 0))
             end = float(r.get("end", 0))
-            timestamps.append(WordTimestamp(word=word, start=start, end=end, speaker=None))
+            is_break = bool(r.get("line_break", False))
+            timestamps.append(WordTimestamp(word=word, start=start, end=end, speaker=None, line_break=is_break))
             
         config.video.style.secondary_colour = hex_to_ass_color(color_ungesungen)
         config.video.style.primary_colour = hex_to_ass_color(color_gesungen)
@@ -320,7 +350,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                         
                     track_selector = gr.Radio(choices=["Vocals", "Instrumental", "Original"], value="Vocals", label="Audiospur wechseln")
                     gr.HTML('<div id="waveform-container" style="width: 100%; border: 1px solid #ccc; background: #1f2937; border-radius: 8px;"></div><div id="timeline-container"></div>')
-                    gr.Markdown("*💡 Editor-Controls: Doppelklick zum Ändern | Ziehen für neues Wort | [Entf] zum Löschen | [Strg+Z] Rückgängig | [Strg+Y] Wiederholen.*")
+                    gr.Markdown("*💡 Editor-Controls: Doppelklick zum Ändern | Ziehen für neues Wort | [Entf] zum Löschen | [Enter] Zeilenumbruch umschalten (Blau = Start einer neuen Zeile) | [Strg+Z] Rückgängig*")
                     
                     with gr.Row():
                         btn_play = gr.Button("▶ Play/Pause")
@@ -405,7 +435,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                 let text = "";
                 if (typeof r.content === 'string') text = r.content;
                 else if (r.element) text = r.element.innerText || r.element.textContent;
-                return { start: r.start, end: r.end, content: text };
+                return { start: r.start, end: r.end, content: text, color: r.color };
             });
             window.historyStack = window.historyStack.slice(0, window.historyIndex + 1);
             window.historyStack.push(currentState);
@@ -422,7 +452,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     start: item.start,
                     end: item.end,
                     content: item.content,
-                    color: 'rgba(16, 185, 129, 0.3)',
+                    color: item.color || 'rgba(16, 185, 129, 0.3)',
                     drag: true,
                     resize: true
                 });
@@ -474,6 +504,15 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     window.activeRegion.remove();
                     window.activeRegion = null;
                 }
+                
+                if (e.key === 'Enter' && window.activeRegion) {
+                    e.preventDefault();
+                    const currentColor = window.activeRegion.color;
+                    const isBlue = (currentColor === 'rgba(59, 130, 246, 0.5)' || currentColor === 'rgb(59, 130, 246, 0.5)');
+                    const newColor = isBlue ? 'rgba(16, 185, 129, 0.3)' : 'rgba(59, 130, 246, 0.5)';
+                    window.activeRegion.setOptions({ color: newColor });
+                    window.saveState();
+                }
             };
             document.addEventListener('keydown', window.ws_keydown_listener);
         }
@@ -498,13 +537,14 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
 
         window.ws.once('decode', () => {
             if (words && words.length > 0) {
-                words.forEach(w => {
+                words.forEach((w, idx) => {
                     const wordText = String(w.word || w.text || "");
+                    const isLineBreak = w.line_break !== undefined ? w.line_break : (idx === 0);
                     regionsPlugin.addRegion({
                         start: w.start,
                         end: w.end,
                         content: wordText,
-                        color: 'rgba(16, 185, 129, 0.3)',
+                        color: isLineBreak ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)',
                         drag: true,
                         resize: true
                     });
@@ -574,7 +614,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                 let text = "";
                 if (typeof r.content === 'string') text = r.content;
                 else if (r.element) text = r.element.innerText || r.element.textContent;
-                return { start: r.start, end: r.end, content: text };
+                return { start: r.start, end: r.end, content: text, color: r.color };
             });
             window.historyStack = window.historyStack.slice(0, window.historyIndex + 1);
             window.historyStack.push(currentState);
@@ -591,7 +631,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     start: item.start,
                     end: item.end,
                     content: item.content,
-                    color: 'rgba(16, 185, 129, 0.3)',
+                    color: item.color || 'rgba(16, 185, 129, 0.3)',
                     drag: true,
                     resize: true
                 });
@@ -643,6 +683,15 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     window.activeRegion.remove();
                     window.activeRegion = null;
                 }
+                
+                if (e.key === 'Enter' && window.activeRegion) {
+                    e.preventDefault();
+                    const currentColor = window.activeRegion.color;
+                    const isBlue = (currentColor === 'rgba(59, 130, 246, 0.5)' || currentColor === 'rgb(59, 130, 246, 0.5)');
+                    const newColor = isBlue ? 'rgba(16, 185, 129, 0.3)' : 'rgba(59, 130, 246, 0.5)';
+                    window.activeRegion.setOptions({ color: newColor });
+                    window.saveState();
+                }
             };
             document.addEventListener('keydown', window.ws_keydown_listener);
         }
@@ -667,13 +716,14 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
 
         window.ws.once('decode', () => {
             if (words && words.length > 0) {
-                words.forEach(w => {
+                words.forEach((w, idx) => {
                     const wordText = String(w.word || w.text || "");
+                    const isLineBreak = w.line_break !== undefined ? w.line_break : (idx === 0);
                     regionsPlugin.addRegion({
                         start: w.start,
                         end: w.end,
                         content: wordText,
-                        color: 'rgba(16, 185, 129, 0.3)',
+                        color: isLineBreak ? 'rgba(59, 130, 246, 0.5)' : 'rgba(16, 185, 129, 0.3)',
                         drag: true,
                         resize: true
                     });
@@ -772,7 +822,8 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     } else if (r.element) {
                         textContent = r.element.innerText || r.element.textContent;
                     }
-                    return {word: textContent, start: r.start, end: r.end};
+                    const isLineBreak = (r.color === 'rgba(59, 130, 246, 0.5)' || r.color === 'rgb(59, 130, 246, 0.5)');
+                    return {word: textContent, start: r.start, end: r.end, line_break: isLineBreak};
                 });
             }
             return [JSON.stringify(data), inst, bg, aud, keep, orig, sec, prim, fsize, lead, marg, cues, down, proj, anim];
@@ -839,7 +890,8 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     } else if (r.element) {
                         textContent = r.element.innerText || r.element.textContent;
                     }
-                    return {word: textContent, start: r.start, end: r.end};
+                    const isLineBreak = (r.color === 'rgba(59, 130, 246, 0.5)' || r.color === 'rgb(59, 130, 246, 0.5)');
+                    return {word: textContent, start: r.start, end: r.end, line_break: isLineBreak};
                 });
             }
             return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim];
@@ -864,7 +916,8 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     } else if (r.element) {
                         textContent = r.element.innerText || r.element.textContent;
                     }
-                    return {word: textContent, start: r.start, end: r.end};
+                    const isLineBreak = (r.color === 'rgba(59, 130, 246, 0.5)' || r.color === 'rgb(59, 130, 246, 0.5)');
+                    return {word: textContent, start: r.start, end: r.end, line_break: isLineBreak};
                 });
             }
             return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim];

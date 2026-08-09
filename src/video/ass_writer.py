@@ -34,19 +34,13 @@ def generate_karaoke_ass(timestamps: list[WordTimestamp], output_path: Path, con
     max_pause = config.video.ass.max_pause_seconds
     max_words = config.video.ass.max_words_per_line
     
-    # Wort-Gruppierung
+    # Wort-Gruppierung (User-gesteuert via line_break)
     for wt in timestamps:
         if not current_line_words:
             current_line_words.append(wt)
             continue
             
-        prev_wt = current_line_words[-1]
-        pause = wt.start - prev_wt.end
-        
-        # Zeilenumbruch wenn Pause zu lang, Limit erreicht oder Speaker wechselt
-        speaker_changed = (wt.speaker != prev_wt.speaker)
-        
-        if pause > max_pause or len(current_line_words) >= max_words or speaker_changed:
+        if wt.line_break or (wt.speaker != current_line_words[-1].speaker):
             lines.append(current_line_words)
             current_line_words = [wt]
         else:
