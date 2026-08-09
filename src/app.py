@@ -114,7 +114,7 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
         raise gr.Error(f"Fehler: {str(e)}")
 
 def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in_str, keep_vocals, use_original_video,
-                   color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, project_name, animation_style, progress=gr.Progress()):
+                   color_ungesungen, color_gesungen, font_size, lead_time, pos_x, pos_y, use_entry_cues, downscale_1080p, project_name, animation_style, progress=gr.Progress()):
     try:
         gr.Info("Timestamps übernommen! Starte Video-Rendering...")
         if not instrumental_path_str or not regions_json:
@@ -144,7 +144,8 @@ def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in
         config.video.style.secondary_colour = hex_to_ass_color(color_ungesungen)
         config.video.style.primary_colour = hex_to_ass_color(color_gesungen)
         config.video.style.font_size = int(font_size)
-        config.video.style.margin_v = int(margin_v)
+        config.video.style.pos_x = float(pos_x)
+        config.video.style.pos_y = float(pos_y)
         config.video.ass.lead_time_seconds = float(lead_time)
         config.video.ass.use_entry_cues = bool(use_entry_cues)
         config.video.ass.animation_style = animation_style
@@ -171,7 +172,7 @@ def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in
             raise e
         raise gr.Error(f"Fehler: {str(e)}")
 
-def export_wrapper(regions_json, media_paths, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, project_name, old_project_path, animation_style):
+def export_wrapper(regions_json, media_paths, color_ungesungen, color_gesungen, font_size, lead_time, pos_x, pos_y, use_entry_cues, downscale_1080p, project_name, old_project_path, animation_style):
     try:
         gr.Info("Projekt-ZIP wird erstellt...")
         try:
@@ -184,7 +185,8 @@ def export_wrapper(regions_json, media_paths, color_ungesungen, color_gesungen, 
             "color_gesungen": color_gesungen,
             "font_size": font_size,
             "lead_time": lead_time,
-            "margin_v": margin_v,
+            "pos_x": pos_x,
+            "pos_y": pos_y,
             "use_entry_cues": use_entry_cues,
             "downscale_1080p": downscale_1080p,
             "animation_style": animation_style
@@ -211,9 +213,10 @@ def import_wrapper(zip_file):
             json.dumps(timestamps),
             config_overrides.get("color_ungesungen", "#FFFFFF"),
             config_overrides.get("color_gesungen", "#00FFFF"),
-            config_overrides.get("font_size", 36),
+            config_overrides.get("font_size", 35),
             config_overrides.get("lead_time", 1.5),
-            config_overrides.get("margin_v", 15),
+            config_overrides.get("pos_x", 50),
+            config_overrides.get("pos_y", 80),
             config_overrides.get("use_entry_cues", True),
             config_overrides.get("downscale_1080p", False),
             gr.update(value="Vocals"),
@@ -404,11 +407,12 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     dropdown_anim_style = gr.Dropdown(choices=["Standard", "Karaoke Fill", "TikTok Pop-Up", "Typewriter"], value="TikTok Pop-Up", label="Animations-Stil")
                     color_ungesungen = gr.ColorPicker(label="Standardfarbe (ungesungen)", value="#FFFFFF")
                     color_gesungen = gr.ColorPicker(label="Highlight-Farbe (gesungen)", value="#00FFFF")
-                    font_size = gr.Slider(minimum=5, maximum=100, step=1, label="Schriftgröße", value=36)
+                    font_size = gr.Slider(minimum=5, maximum=100, step=1, label="Schriftgröße (px)", value=35)
+                    pos_x = gr.Slider(minimum=0, maximum=100, step=1, label="Position X (%)", value=50)
+                    pos_y = gr.Slider(minimum=0, maximum=100, step=1, label="Position Y (%)", value=80)
                     lead_time = gr.Slider(minimum=0.0, maximum=3.0, step=0.1, label="Lead-Time (Sek.)", value=1.5)
                     use_entry_cues_cb = gr.Checkbox(label="Visual Countdowns vor Gesangseinsatz", value=True)
                     downscale_1080p_cb = gr.Checkbox(label="Video für schnelleres Rendering auf max. 1080p herunterskalieren (behält Seitenverhältnis)", value=False)
-                    margin_v = gr.Slider(minimum=0, maximum=50, step=1, label="Abstand von unten (%)", value=15)
                     
             with gr.Row():
                 with gr.Column():
@@ -819,6 +823,40 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
         // Initiales Update beim Laden
         setTimeout(window.updatePreviewMonitor, 100);
 
+        const dragMonitor = document.getElementById('preview-monitor');
+        const dragContainer = document.getElementById('preview-text-container');
+        dragContainer.style.position = 'absolute';
+        if (!dragContainer.style.left) dragContainer.style.left = '50%';
+        if (!dragContainer.style.top) dragContainer.style.top = '80%';
+        dragContainer.style.transform = 'translate(-50%, -100%)';
+        dragContainer.style.width = 'max-content';
+        dragContainer.style.cursor = 'move';
+        
+        if (!window.dragControllerInit) {
+            window.dragControllerInit = true;
+            window.dragController = {
+                isDragging: false,
+                down: function(e) {
+                    if (e.target.tagName !== 'SPAN') window.dragController.isDragging = true;
+                },
+                move: function(e) {
+                    if (!window.dragController.isDragging) return;
+                    const rect = dragMonitor.getBoundingClientRect();
+                    let x = e.clientX - rect.left;
+                    let y = e.clientY - rect.top;
+                    let px = (x / rect.width) * 100;
+                    let py = (y / rect.height) * 100;
+                    px = Math.max(0, Math.min(100, px));
+                    py = Math.max(0, Math.min(100, py));
+                    dragContainer.style.left = px + '%';
+                    dragContainer.style.top = py + '%';
+                },
+                up: function(e) { window.dragController.isDragging = false; }
+            };
+            dragMonitor.addEventListener('mousedown', window.dragController.down);
+            document.addEventListener('mousemove', window.dragController.move);
+            document.addEventListener('mouseup', window.dragController.up);
+        }
         return [];
     }
     """
@@ -1235,6 +1273,40 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
         // Initiales Update beim Laden
         setTimeout(window.updatePreviewMonitor, 100);
 
+        const dragMonitor = document.getElementById('preview-monitor');
+        const dragContainer = document.getElementById('preview-text-container');
+        dragContainer.style.position = 'absolute';
+        if (!dragContainer.style.left) dragContainer.style.left = '50%';
+        if (!dragContainer.style.top) dragContainer.style.top = '80%';
+        dragContainer.style.transform = 'translate(-50%, -100%)';
+        dragContainer.style.width = 'max-content';
+        dragContainer.style.cursor = 'move';
+        
+        if (!window.dragControllerInit2) {
+            window.dragControllerInit2 = true;
+            window.dragController2 = {
+                isDragging: false,
+                down: function(e) {
+                    if (e.target.tagName !== 'SPAN') window.dragController2.isDragging = true;
+                },
+                move: function(e) {
+                    if (!window.dragController2.isDragging) return;
+                    const rect = dragMonitor.getBoundingClientRect();
+                    let x = e.clientX - rect.left;
+                    let y = e.clientY - rect.top;
+                    let px = (x / rect.width) * 100;
+                    let py = (y / rect.height) * 100;
+                    px = Math.max(0, Math.min(100, px));
+                    py = Math.max(0, Math.min(100, py));
+                    dragContainer.style.left = px + '%';
+                    dragContainer.style.top = py + '%';
+                },
+                up: function(e) { window.dragController2.isDragging = false; }
+            };
+            dragMonitor.addEventListener('mousedown', window.dragController2.down);
+            document.addEventListener('mousemove', window.dragController2.move);
+            document.addEventListener('mouseup', window.dragController2.up);
+        }
         return [];
     }
     """
@@ -1260,6 +1332,20 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
     btn_play.click(fn=None, js="() => { if (window.ws) window.ws.playPause(); }")
     btn_zoom_in.click(fn=None, js="() => { if (window.ws) window.ws.zoom(window.ws.options.minPxPerSec * 1.5); }")
     btn_zoom_out.click(fn=None, js="() => { if (window.ws) window.ws.zoom(window.ws.options.minPxPerSec / 1.5); }")
+    
+    update_preview_css_js = """
+    (fs, px, py) => {
+        const c = document.getElementById('preview-text-container');
+        if (c) {
+            c.style.fontSize = fs + 'px';
+            c.style.left = px + '%';
+            c.style.top = py + '%';
+        }
+    }
+    """
+    font_size.change(fn=None, inputs=[font_size, pos_x, pos_y], js=update_preview_css_js)
+    pos_x.change(fn=None, inputs=[font_size, pos_x, pos_y], js=update_preview_css_js)
+    pos_y.change(fn=None, inputs=[font_size, pos_x, pos_y], js=update_preview_css_js)
     
     track_selector.change(
         fn=None,
@@ -1305,7 +1391,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
         fn=start_rendering,
         inputs=[
             dummy_render_input, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video,
-            color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, input_project_name, dropdown_anim_style
+            color_ungesungen, color_gesungen, font_size, lead_time, pos_x, pos_y, use_entry_cues_cb, downscale_1080p_cb, input_project_name, dropdown_anim_style
         ],
         outputs=[video_out, files_out],
         js="""
@@ -1332,7 +1418,12 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     return {word: textContent, start: r.start, end: r.end, block_break: isBlock, line_break: isLine};
                 });
             }
-            return [JSON.stringify(data), inst, bg, aud, keep, orig, sec, prim, fsize, lead, marg, cues, down, proj, anim];
+            const container = document.getElementById('preview-text-container');
+            if (container) {
+                if (container.style.left) px = parseFloat(container.style.left);
+                if (container.style.top) py = parseFloat(container.style.top);
+            }
+            return [JSON.stringify(data), inst, bg, aud, keep, orig, sec, prim, fsize, lead, px, py, cues, down, proj, anim];
         }
         """
     )
@@ -1381,10 +1472,10 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
     
     btn_save_project.click(
         fn=export_wrapper,
-        inputs=[dummy_render_input, media_paths_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, input_project_name, current_project_path, dropdown_anim_style],
+        inputs=[dummy_render_input, media_paths_state, color_ungesungen, color_gesungen, font_size, lead_time, pos_x, pos_y, use_entry_cues_cb, downscale_1080p_cb, input_project_name, current_project_path, dropdown_anim_style],
         outputs=[current_project_path, table_projects],
         js="""
-        (dummy, media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim) => {
+        (dummy, media_paths, cu, cg, fsize, lead, px, py, cues, down, proj, old_path, anim) => {
             let data = [];
             if (window.regionsPlugin) {
                 data = window.regionsPlugin.getRegions().map(r => {
@@ -1401,17 +1492,22 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     return {word: textContent, start: r.start, end: r.end, block_break: isBlock, line_break: isLine};
                 });
             }
-            return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim];
+            const container = document.getElementById('preview-text-container');
+            if (container) {
+                if (container.style.left) px = parseFloat(container.style.left);
+                if (container.style.top) py = parseFloat(container.style.top);
+            }
+            return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, px, py, cues, down, proj, old_path, anim];
         }
         """
     )
     
     btn_save_as_project.click(
         fn=lambda *args: export_wrapper(*args[:-2], None, args[-1]),
-        inputs=[dummy_render_input, media_paths_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, input_project_name, current_project_path, dropdown_anim_style],
+        inputs=[dummy_render_input, media_paths_state, color_ungesungen, color_gesungen, font_size, lead_time, pos_x, pos_y, use_entry_cues_cb, downscale_1080p_cb, input_project_name, current_project_path, dropdown_anim_style],
         outputs=[current_project_path, table_projects],
         js="""
-        (dummy, media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim) => {
+        (dummy, media_paths, cu, cg, fsize, lead, px, py, cues, down, proj, old_path, anim) => {
             let data = [];
             if (window.regionsPlugin) {
                 data = window.regionsPlugin.getRegions().map(r => {
@@ -1428,7 +1524,12 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
                     return {word: textContent, start: r.start, end: r.end, block_break: isBlock, line_break: isLine};
                 });
             }
-            return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim];
+            const container = document.getElementById('preview-text-container');
+            if (container) {
+                if (container.style.left) px = parseFloat(container.style.left);
+                if (container.style.top) py = parseFloat(container.style.top);
+            }
+            return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, px, py, cues, down, proj, old_path, anim];
         }
         """
     )
@@ -1442,7 +1543,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
     ).then(
         fn=import_wrapper,
         inputs=[upload_import_hub],
-        outputs=[media_paths_state, words_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, track_selector, input_project_name, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video, current_project_path]
+        outputs=[media_paths_state, words_state, color_ungesungen, color_gesungen, font_size, lead_time, pos_x, pos_y, use_entry_cues_cb, downscale_1080p_cb, track_selector, input_project_name, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video, current_project_path]
     ).then(
         fn=lambda: (gr.update(visible=False), gr.update(value=list_projects())),
         inputs=None,
@@ -1495,7 +1596,7 @@ with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=c
     ).then(
         fn=import_wrapper,
         inputs=[dummy_render_input],
-        outputs=[media_paths_state, words_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, track_selector, input_project_name, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video, current_project_path]
+        outputs=[media_paths_state, words_state, color_ungesungen, color_gesungen, font_size, lead_time, pos_x, pos_y, use_entry_cues_cb, downscale_1080p_cb, track_selector, input_project_name, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video, current_project_path]
     ).then(
         fn=lambda: gr.update(visible=False),
         inputs=None,

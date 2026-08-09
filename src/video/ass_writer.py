@@ -54,16 +54,16 @@ def generate_karaoke_ass(timestamps: list[WordTimestamp], output_path: Path, con
     play_res_x = config.video.ass.play_res_x
     play_res_y = config.video.ass.play_res_y
     
-    # MarginV als Prozent relativ zur Videohöhe
-    margin_v_abs = int(play_res_y * (style.margin_v / 100.0))
+    pos_x_px = int(play_res_x * (getattr(style, "pos_x", 50.0) / 100.0))
+    pos_y_px = int(play_res_y * (getattr(style, "pos_y", 80.0) / 100.0))
     
     # Basis-Style
-    styles_str = f"Style: Karaoke,Arial,{style.font_size},{style.primary_colour},{style.secondary_colour},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,{margin_v_abs},1\n"
+    styles_str = f"Style: Karaoke,Arial,{style.font_size},{style.primary_colour},{style.secondary_colour},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,10,1\n"
     
     # Speaker-Styles
     for i, spk in enumerate(unique_speakers):
         spk_color = style.duet_colours[i % len(style.duet_colours)]
-        styles_str += f"Style: Karaoke_{spk},Arial,{style.font_size},{spk_color},{style.secondary_colour},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,{margin_v_abs},1\n"
+        styles_str += f"Style: Karaoke_{spk},Arial,{style.font_size},{spk_color},{style.secondary_colour},&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},2,10,10,10,1\n"
         
     ass_header = f"""[Script Info]
 Title: Videoke Karaoke Subtitles
@@ -99,7 +99,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             line_start = format_ass_time(line_start_time)
             line_end = format_ass_time(line_words[-1].end)
                 
-            ass_text = ""
+            ass_text = f"{{\\pos({pos_x_px},{pos_y_px})}}"
             
             # Entry Cue Logik
             show_cue = False

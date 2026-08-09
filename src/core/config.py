@@ -31,7 +31,8 @@ class StyleConfig(BaseModel):
     secondary_colour: str = "&H00FFFFFF"
     outline: int = 3
     shadow: int = 2
-    margin_v: int = 15
+    pos_x: float = 50.0
+    pos_y: float = 80.0
     duet_colours: List[str] = ["&H00FFFF00", "&H00FF00FF", "&H0000FFFF", "&H0000FF00"]
 
 class VideoConfig(BaseModel):
