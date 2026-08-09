@@ -9,7 +9,7 @@ a = Analysis(
     ['src/launcher.py'],
     pathex=[],
     binaries=[],
-    datas=collect_data_files('gradio') + collect_data_files('gradio_client'),
+    datas=collect_data_files('gradio', include_py_files=True) + collect_data_files('gradio_client', include_py_files=True),
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},

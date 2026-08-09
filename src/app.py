@@ -3,7 +3,10 @@ from pathlib import Path
 
 # Fix: Setze den Root-Pfad des Projekts in den sys.path, 
 # damit absolute Imports via 'src.XXX' funktionieren.
-project_root = Path(__file__).parent.parent
+if getattr(sys, 'frozen', False):
+    project_root = Path(sys._MEIPASS)
+else:
+    project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 import gradio as gr
