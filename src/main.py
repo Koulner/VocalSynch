@@ -110,7 +110,7 @@ class VideokePipeline:
             logger.info(f"\n[bold red]Pipeline-Fehler (Extraction):[/bold red] {str(e)}")
             raise e
 
-    def run_rendering(self, instrumental_path: Path, timestamps: list[WordTimestamp], override_config: Optional[VideokeConfig] = None, use_original_video: bool = False):
+    def run_rendering(self, instrumental_path: Path, timestamps: list[WordTimestamp], override_config: Optional[VideokeConfig] = None, use_original_video: bool = False, project_name: str = None):
         """
         Führt Phase 2 aus: Video rendern mit editierten Timestamps und Config.
         """
@@ -146,8 +146,13 @@ class VideokePipeline:
             renderer = VideoRenderer(config=active_config)
             ass_path = self.output_dir / "karaoke.ass"
             
-            original_name = self.bg_visual.stem if self.bg_visual else self.input_path.stem
-            output_mp4 = self.output_dir / f"{original_name}_videoke.mp4"
+            if project_name:
+                from src.core.project_manager import sanitize_filename
+                safe_name = sanitize_filename(project_name)
+                output_mp4 = self.output_dir / f"{safe_name}.mp4"
+            else:
+                original_name = self.bg_visual.stem if self.bg_visual else self.input_path.stem
+                output_mp4 = self.output_dir / f"{original_name}_videoke.mp4"
             
             logger.info(f"[cyan]Generiere ASS-Untertitel (Canvas: {target_w}x{target_h})...[/cyan]")
             generate_karaoke_ass(timestamps, ass_path, config=active_config)

@@ -127,6 +127,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             else:
                 ass_text += f"{{\\k{total_delay_cs}}} "
             
+            anim_style = getattr(config.video.ass, "animation_style", "TikTok Pop-Up")
+            
             prev_end = None
             for wt in line_words:
                 if prev_end is not None:
@@ -137,7 +139,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         
                 duration_cs = int(round((wt.end - wt.start) * 100))
                 space = " " if wt.append_space else ""
-                ass_text += f"{{\\kf{duration_cs}}}{wt.word}{space}"
+                
+                start_ms = int(max(0, round((wt.start - line_start_time) * 1000)))
+                end_ms = int(max(0, round((wt.end - line_start_time) * 1000)))
+                
+                if anim_style == "Standard":
+                    ass_text += f"{wt.word}{space}"
+                elif anim_style == "TikTok Pop-Up":
+                    pop_end = start_ms + 150
+                    ass_text += f"{{\\fscx100\\fscy100\\t({max(0, start_ms-1)},{start_ms},\\fscx130\\fscy130)\\t({start_ms},{pop_end},\\fscx100\\fscy100)}}{wt.word}{space}"
+                elif anim_style == "Typewriter":
+                    ass_text += f"{{\\alpha&HFF&\\t({start_ms},{end_ms},\\alpha&H00&)}}{wt.word}{space}"
+                else:
+                    # Fallback zu Karaoke Fill
+                    ass_text += f"{{\\kf{duration_cs}}}{wt.word}{space}"
+                    
                 prev_end = wt.end
                 
             ass_text = ass_text.rstrip()

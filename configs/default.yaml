@@ -5,9 +5,11 @@ text:
   whisper_model: "base"
   hf_token: ""
   use_syllables: false
+  translation_target: "en"
   
 video:
   ass:
+    animation_style: "TikTok Pop-Up"
     lead_time_seconds: 1.5
     max_words_per_line: 14
     max_pause_seconds: 1.2

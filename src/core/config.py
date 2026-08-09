@@ -12,6 +12,7 @@ class TextConfig(BaseModel):
     whisper_model: str = "base"
     hf_token: Optional[str] = None
     use_syllables: bool = False
+    translation_target: str = "en"
 
 class AssConfig(BaseModel):
     """Logische Konfiguration für das Untertitel-Timing."""
@@ -21,6 +22,7 @@ class AssConfig(BaseModel):
     use_entry_cues: bool = True
     play_res_x: int = 1280
     play_res_y: int = 720
+    animation_style: str = "TikTok Pop-Up"
 
 class StyleConfig(BaseModel):
     """Visuelle Konfiguration für die Untertitel-Darstellung (ASS Format)."""

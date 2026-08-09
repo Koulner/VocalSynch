@@ -8,6 +8,7 @@ torchaudio
 pyyaml
 pandas
 pyphen
+deep-translator
 
 # ==========================================
 # PyTorch Installation Instructions

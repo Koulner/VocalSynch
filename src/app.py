@@ -12,7 +12,8 @@ import json
 from src.main import prepare_input, VideokePipeline
 from src.core.config import VideokeConfig
 from src.models.domain import WordTimestamp
-from src.core.project_manager import export_project, import_project
+from src.core.project_manager import export_project, import_project, sanitize_filename, list_projects
+from src.text.translator import translate_regions
 
 def hex_to_ass_color(hex_rgb: str) -> str:
     """Konvertiert Gradio RGB Hex (#RRGGBB) zu ASS BGR Hex (&H00BBGGRR)."""
@@ -84,7 +85,7 @@ def start_extraction(audio_input, bg_input, keep_vocals, use_original_video, is_
         raise gr.Error(f"Fehler: {str(e)}")
 
 def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in_str, keep_vocals, use_original_video,
-                   color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, progress=gr.Progress()):
+                   color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, project_name, animation_style, progress=gr.Progress()):
     try:
         gr.Info("Timestamps übernommen! Starte Video-Rendering...")
         if not instrumental_path_str or not regions_json:
@@ -115,12 +116,13 @@ def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in
         config.video.style.margin_v = int(margin_v)
         config.video.ass.lead_time_seconds = float(lead_time)
         config.video.ass.use_entry_cues = bool(use_entry_cues)
+        config.video.ass.animation_style = animation_style
         config.video.downscale_1080p = bool(downscale_1080p)
         
         pipeline = VideokePipeline(config=config, input_path=input_path, output_dir=output_dir, bg_visual=bg_visual)
         
         final_results = None
-        for status in pipeline.run_rendering(instrumental_path, timestamps, override_config=config, use_original_video=use_original_video):
+        for status in pipeline.run_rendering(instrumental_path, timestamps, override_config=config, use_original_video=use_original_video, project_name=project_name):
             if isinstance(status, str):
                 progress(0.8, desc=status)
             elif isinstance(status, dict):
@@ -138,7 +140,7 @@ def start_rendering(regions_json, instrumental_path_str, bg_visual_str, audio_in
             raise e
         raise gr.Error(f"Fehler: {str(e)}")
 
-def export_wrapper(regions_json, media_paths, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p):
+def export_wrapper(regions_json, media_paths, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues, downscale_1080p, project_name, old_project_path, animation_style):
     try:
         gr.Info("Projekt-ZIP wird erstellt...")
         try:
@@ -153,12 +155,13 @@ def export_wrapper(regions_json, media_paths, color_ungesungen, color_gesungen, 
             "lead_time": lead_time,
             "margin_v": margin_v,
             "use_entry_cues": use_entry_cues,
-            "downscale_1080p": downscale_1080p
+            "downscale_1080p": downscale_1080p,
+            "animation_style": animation_style
         }
         
-        zip_path = export_project(timestamps, media_paths, config_overrides)
-        gr.Info("Projekt bereit zum Download!")
-        return str(zip_path)
+        zip_path = export_project(timestamps, media_paths, config_overrides, project_name=project_name, old_project_path=old_project_path)
+        gr.Info("Projekt gespeichert!")
+        return str(zip_path), gr.update(value=list_projects())
     except Exception as e:
         if isinstance(e, gr.Error):
             raise e
@@ -167,8 +170,9 @@ def export_wrapper(regions_json, media_paths, color_ungesungen, color_gesungen, 
 def import_wrapper(zip_file):
     try:
         if not zip_file:
-            raise gr.Error("Keine Datei hochgeladen.")
-        media_paths, timestamps, config_overrides = import_project(zip_file.name)
+            raise gr.Error("Keine Datei hochgeladen oder ausgewählt.")
+        file_path = zip_file.name if hasattr(zip_file, "name") else str(zip_file)
+        media_paths, timestamps, config_overrides, project_name = import_project(file_path)
         
         gr.Info("Projekt erfolgreich geladen!")
         return (
@@ -181,7 +185,14 @@ def import_wrapper(zip_file):
             config_overrides.get("margin_v", 15),
             config_overrides.get("use_entry_cues", True),
             config_overrides.get("downscale_1080p", False),
-            gr.update(value="Vocals")
+            gr.update(value="Vocals"),
+            gr.update(value=project_name),
+            media_paths.get("Instrumental"),
+            None,
+            media_paths.get("Original"),
+            False,
+            False,
+            file_path
         )
     except Exception as e:
         if isinstance(e, gr.Error):
@@ -244,7 +255,7 @@ custom_css = """
 }
 """
 
-with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
+with gr.Blocks(theme=gr.themes.Base(primary_hue=gr.themes.colors.emerald), css=custom_css) as demo:
     with gr.Column(visible=False, elem_classes=["fullscreen-modal"]) as loading_modal:
         gr.HTML("""
         <div class="modal-box">
@@ -253,15 +264,32 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
         </div>
         """)
         
-    gr.Markdown("# 🎤 Auto-Videoke Creator (Human-in-the-Loop)")
+    gr.Markdown("# 🎤 VocalSync Pro (Human-in-the-Loop)")
     
     state_instrumental = gr.State()
     state_bg_visual = gr.State()
     state_audio_in = gr.State()
     state_keep_vocals = gr.State()
     state_use_original_video = gr.State()
+    current_project_path = gr.State(value=None)
     
     with gr.Tabs(elem_id="main_tabs") as tabs:
+        with gr.Tab("🏠 Startseite / Projekte", id="tab_home"):
+            gr.Markdown("# 🎤 Willkommen in VocalSync Pro")
+            with gr.Row():
+                btn_new_project = gr.Button("✨ Neues Projekt starten", variant="primary", size="lg")
+                upload_import_hub = gr.File(label="📁 Projekt importieren (.zip)", file_types=[".zip", ".videoke"])
+                btn_refresh_hub = gr.Button("🔄 Liste aktualisieren")
+            
+            gr.Markdown("### 📂 Zuletzt bearbeitete Projekte")
+            table_projects = gr.Dataframe(
+                headers=["Projektname", "Zuletzt bearbeitet", "Pfad"], 
+                interactive=False, 
+                type="array"
+            )
+            selected_project_path = gr.State(value=None)
+            btn_delete_project = gr.Button("🗑️ Ausgewähltes Projekt löschen", variant="stop")
+
         with gr.Tab("Schritt 1: Analyse", id="tab_analyse"):
             with gr.Row():
                 with gr.Column(scale=1):
@@ -285,9 +313,10 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
             with gr.Row():
                 with gr.Column(scale=2):
                     gr.Markdown("### WhisperX Timestamps Editor")
+                    input_project_name = gr.Textbox(label="Projektname", value="Neues_Projekt", max_lines=1)
                     with gr.Row():
-                        btn_import = gr.File(label="Projekt laden (.zip)", file_types=[".zip", ".videoke"], type="filepath")
-                        btn_export = gr.DownloadButton("Projekt speichern (.zip)")
+                        btn_save_project = gr.Button("💾 Speichern", variant="primary")
+                        btn_save_as_project = gr.Button("📁 Speichern unter (Duplizieren)")
                         
                     track_selector = gr.Radio(choices=["Vocals", "Instrumental", "Original"], value="Vocals", label="Audiospur wechseln")
                     gr.HTML('<div id="waveform-container" style="width: 100%; border: 1px solid #ccc; background: #1f2937; border-radius: 8px;"></div><div id="timeline-container"></div>')
@@ -299,6 +328,10 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                         btn_zoom_out = gr.Button("➖ Zoom Out")
                         btn_save = gr.Button("💾 Sync anwenden & Rendern", variant="primary", elem_id="btn_save_sync")
                         
+                    with gr.Row():
+                        dropdown_target_lang = gr.Dropdown(choices=["en", "de", "es", "fr", "it", "pt", "nl"], value="en", label="🌐 Sprache übersetzen")
+                        btn_translate = gr.Button("Übersetzen & Anwenden")
+                        
                     slider_speed = gr.Slider(minimum=0.25, maximum=2.0, value=1.0, step=0.25, label="Wiedergabegeschwindigkeit (nur Vorschau)")
                         
                     media_paths_state = gr.JSON(visible=False)
@@ -307,6 +340,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                     
                 with gr.Column(scale=1):
                     gr.Markdown("### Visuelle Settings")
+                    dropdown_anim_style = gr.Dropdown(choices=["Standard", "Karaoke Fill", "TikTok Pop-Up", "Typewriter"], value="TikTok Pop-Up", label="Animations-Stil")
                     color_ungesungen = gr.ColorPicker(label="Standardfarbe (ungesungen)", value="#FFFFFF")
                     color_gesungen = gr.ColorPicker(label="Highlight-Farbe (gesungen)", value="#00FFFF")
                     font_size = gr.Slider(minimum=5, maximum=100, step=1, label="Schriftgröße", value=36)
@@ -342,8 +376,8 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
 
         window.ws = WaveSurfer.create({
             container: '#waveform-container',
-            waveColor: '#8b5cf6',
-            progressColor: '#c4b5fd',
+            waveColor: '#475569',
+            progressColor: '#10b981',
             minPxPerSec: 100,
             height: 128
         });
@@ -388,7 +422,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                     start: item.start,
                     end: item.end,
                     content: item.content,
-                    color: 'rgba(255, 255, 0, 0.4)',
+                    color: 'rgba(16, 185, 129, 0.3)',
                     drag: true,
                     resize: true
                 });
@@ -470,7 +504,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                         start: w.start,
                         end: w.end,
                         content: wordText,
-                        color: 'rgba(255, 255, 0, 0.4)',
+                        color: 'rgba(16, 185, 129, 0.3)',
                         drag: true,
                         resize: true
                     });
@@ -511,8 +545,8 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
 
         window.ws = WaveSurfer.create({
             container: '#waveform-container',
-            waveColor: '#8b5cf6',
-            progressColor: '#c4b5fd',
+            waveColor: '#475569',
+            progressColor: '#10b981',
             minPxPerSec: 100,
             height: 128
         });
@@ -557,7 +591,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                     start: item.start,
                     end: item.end,
                     content: item.content,
-                    color: 'rgba(255, 255, 0, 0.4)',
+                    color: 'rgba(16, 185, 129, 0.3)',
                     drag: true,
                     resize: true
                 });
@@ -639,7 +673,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                         start: w.start,
                         end: w.end,
                         content: wordText,
-                        color: 'rgba(255, 255, 0, 0.4)',
+                        color: 'rgba(16, 185, 129, 0.3)',
                         drag: true,
                         resize: true
                     });
@@ -716,11 +750,11 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
         fn=start_rendering,
         inputs=[
             dummy_render_input, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video,
-            color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb
+            color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, input_project_name, dropdown_anim_style
         ],
         outputs=[video_out, files_out],
         js="""
-        (dummy, inst, bg, aud, keep, orig, sec, prim, fsize, lead, marg, cues, down) => {
+        (dummy, inst, bg, aud, keep, orig, sec, prim, fsize, lead, marg, cues, down, proj, anim) => {
             const btn = document.querySelector('#btn_save_sync');
             if(btn) {
                 const oldText = btn.innerText;
@@ -741,17 +775,59 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                     return {word: textContent, start: r.start, end: r.end};
                 });
             }
-            return [JSON.stringify(data), inst, bg, aud, keep, orig, sec, prim, fsize, lead, marg, cues, down];
+            return [JSON.stringify(data), inst, bg, aud, keep, orig, sec, prim, fsize, lead, marg, cues, down, proj, anim];
         }
         """
     )
     
-    btn_export.click(
-        fn=export_wrapper,
-        inputs=[dummy_render_input, media_paths_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb],
-        outputs=[btn_export],
+    btn_translate.click(
+        fn=translate_regions,
+        inputs=[dummy_render_input, dropdown_target_lang],
+        outputs=[dummy_render_input],
         js="""
-        (dummy, media_paths, cu, cg, fsize, lead, marg, cues, down) => {
+        (dummy, lang) => {
+            let data = [];
+            if (window.regionsPlugin) {
+                data = window.regionsPlugin.getRegions().map(r => {
+                    let textContent = "";
+                    if (typeof r.content === 'string') textContent = r.content;
+                    else if (r.element) textContent = r.element.innerText || r.element.textContent;
+                    return {word: textContent, start: r.start, end: r.end};
+                });
+            }
+            return [JSON.stringify(data), lang];
+        }
+        """
+    ).then(
+        fn=None,
+        inputs=[dummy_render_input],
+        js="""
+        (new_regions_json) => {
+            if (window.ws && window.regionsPlugin) {
+                let new_regions = JSON.parse(new_regions_json);
+                window.regionsPlugin.clearRegions();
+                new_regions.forEach(w => {
+                    window.regionsPlugin.addRegion({
+                        start: w.start,
+                        end: w.end,
+                        content: w.word,
+                        color: 'rgba(16, 185, 129, 0.3)',
+                        drag: true,
+                        resize: true
+                    });
+                });
+                window.saveState();
+            }
+        }
+        """
+    )
+    
+    btn_save_project.click(
+        fn=export_wrapper,
+        inputs=[dummy_render_input, media_paths_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, input_project_name, current_project_path, dropdown_anim_style],
+        outputs=[current_project_path, table_projects],
+        js="""
+        (dummy, media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim) => {
             let data = [];
             if (window.regionsPlugin) {
                 data = window.regionsPlugin.getRegions().map(r => {
@@ -766,15 +842,50 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
                     return {word: textContent, start: r.start, end: r.end};
                 });
             }
-            return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, marg, cues, down];
+            return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim];
+        }
+        """
+    )
+    
+    btn_save_as_project.click(
+        fn=lambda *args: export_wrapper(*args[:-2], None, args[-1]),
+        inputs=[dummy_render_input, media_paths_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, input_project_name, current_project_path, dropdown_anim_style],
+        outputs=[current_project_path, table_projects],
+        js="""
+        (dummy, media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim) => {
+            let data = [];
+            if (window.regionsPlugin) {
+                data = window.regionsPlugin.getRegions().map(r => {
+                    let textContent = "";
+                    if (typeof r.content === 'string') {
+                        textContent = r.content;
+                    } else if (r.content instanceof HTMLElement) {
+                        textContent = r.content.innerText || r.content.textContent;
+                    } else if (r.element) {
+                        textContent = r.element.innerText || r.element.textContent;
+                    }
+                    return {word: textContent, start: r.start, end: r.end};
+                });
+            }
+            return [JSON.stringify(data), media_paths, cu, cg, fsize, lead, marg, cues, down, proj, old_path, anim];
         }
         """
     )
 
-    btn_import.upload(
+    btn_refresh_hub.click(fn=list_projects, inputs=None, outputs=[table_projects])
+
+    upload_import_hub.upload(
+        fn=lambda: (gr.update(selected="tab_editor"), gr.update(visible=True)),
+        inputs=None,
+        outputs=[tabs, loading_modal]
+    ).then(
         fn=import_wrapper,
-        inputs=[btn_import],
-        outputs=[media_paths_state, words_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, track_selector]
+        inputs=[upload_import_hub],
+        outputs=[media_paths_state, words_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, track_selector, input_project_name, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video, current_project_path]
+    ).then(
+        fn=lambda: (gr.update(visible=False), gr.update(value=list_projects())),
+        inputs=None,
+        outputs=[loading_modal, table_projects]
     ).then(
         fn=None,
         inputs=[media_paths_state, words_state, track_selector],
@@ -786,6 +897,49 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as demo:
         inputs=[slider_speed], 
         js="(speed) => { if (window.ws) { window.ws.setPlaybackRate(speed); } }"
     )
+
+    btn_new_project.click(
+        fn=lambda: (gr.update(selected="tab_analyse"), None),
+        inputs=None,
+        outputs=[tabs, current_project_path]
+    )
+
+    def delete_project(path):
+        if path:
+            p = Path(path)
+            if p.exists():
+                p.unlink()
+        return gr.update(value=list_projects())
+
+    btn_delete_project.click(
+        fn=delete_project,
+        inputs=[selected_project_path],
+        outputs=[table_projects]
+    )
+
+    def on_project_select(evt: gr.SelectData, df):
+        path = df[evt.index[0]][2]
+        return gr.update(selected="tab_editor"), gr.update(visible=True), path, path
+
+    table_projects.select(
+        fn=on_project_select,
+        inputs=[table_projects],
+        outputs=[tabs, loading_modal, dummy_render_input, selected_project_path]
+    ).then(
+        fn=import_wrapper,
+        inputs=[dummy_render_input],
+        outputs=[media_paths_state, words_state, color_ungesungen, color_gesungen, font_size, lead_time, margin_v, use_entry_cues_cb, downscale_1080p_cb, track_selector, input_project_name, state_instrumental, state_bg_visual, state_audio_in, state_keep_vocals, state_use_original_video, current_project_path]
+    ).then(
+        fn=lambda: gr.update(visible=False),
+        inputs=None,
+        outputs=[loading_modal]
+    ).then(
+        fn=None,
+        inputs=[media_paths_state, words_state, track_selector],
+        js=IMPORT_JS
+    )
+
+    demo.load(fn=list_projects, inputs=None, outputs=[table_projects])
 
 
 if __name__ == "__main__":
