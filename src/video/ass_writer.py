@@ -147,9 +147,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     ass_text += f"{wt.word}{space}"
                 elif anim_style == "TikTok Pop-Up":
                     pop_end = start_ms + 150
-                    ass_text += f"{{\\fscx100\\fscy100\\t({max(0, start_ms-1)},{start_ms},\\fscx130\\fscy130)\\t({start_ms},{pop_end},\\fscx100\\fscy100)}}{wt.word}{space}"
+                    alpha_start = max(0, start_ms - 1)
+                    # Robuster ASS-Ansatz: Wort ist unsichtbar (\alpha&HFF&), ploppt zu start_ms auf 130% sichtbar auf, 
+                    # und schrumpft dann auf 100%. \kf hält den Karaoke-Cursor synchron.
+                    ass_text += f"{{\\alpha&HFF&\\fscx130\\fscy130\\t({alpha_start},{start_ms},\\alpha&H00&)\\t({start_ms},{pop_end},\\fscx100\\fscy100)\\kf{duration_cs}}}{wt.word}{space}"
                 elif anim_style == "Typewriter":
-                    ass_text += f"{{\\alpha&HFF&\\t({start_ms},{end_ms},\\alpha&H00&)}}{wt.word}{space}"
+                    ass_text += f"{{\\alpha&HFF&\\t({start_ms},{end_ms},\\alpha&H00&)\\kf{duration_cs}}}{wt.word}{space}"
                 else:
                     # Fallback zu Karaoke Fill
                     ass_text += f"{{\\kf{duration_cs}}}{wt.word}{space}"
