@@ -122,6 +122,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             
             prev_end = None
             for wt in line_words:
+                if wt.line_break:
+                    ass_text = ass_text.rstrip() + "\\N"
+                    
                 if prev_end is not None:
                     gap = wt.start - prev_end
                     if gap > 0.1:
@@ -147,9 +150,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 else:
                     # Fallback zu Karaoke Fill
                     ass_text += f"{{\\kf{duration_cs}}}{wt.word}{space}"
-                
-                if wt.line_break:
-                    ass_text += "\\N"
                     
                 prev_end = wt.end
                 
