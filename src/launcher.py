@@ -4,6 +4,16 @@ import threading
 import webbrowser
 import time
 
+class DummyStream:
+    def isatty(self): return False
+    def write(self, data): pass
+    def flush(self): pass
+
+if sys.stdout is None:
+    sys.stdout = DummyStream()
+if sys.stderr is None:
+    sys.stderr = DummyStream()
+
 if getattr(sys, 'frozen', False):
     application_path = sys._MEIPASS
 else:

@@ -4,7 +4,7 @@ __pycache__/
 *$py.class
 
 # Virtual Environments
-.venv/*
+.venv/
 venv/*
 env/
 ENV/
@@ -30,4 +30,8 @@ Thumbs.db
 
 #installer
 build/
-dist/
+dist*/
+
+installer/
+output_installer/
+ergebnis*
